@@ -153,6 +153,7 @@
 .marker-container {
   width: 40px;
   height: 40px;
+  position: relative;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -161,6 +162,27 @@
   border: 3px solid white;
   cursor: pointer;
   transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* หมุดแบบร่าง (สี่เหลี่ยม + ลายเส้นร่าง) */
+.marker-container--sketch {
+  border-radius: 10px;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.22) 0,
+    rgba(255, 255, 255, 0.22) 4px,
+    rgba(255, 255, 255, 0) 4px,
+    rgba(255, 255, 255, 0) 10px
+  );
+}
+
+.marker-container--sketch::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border: 2px dashed rgba(255, 255, 255, 0.85);
+  border-radius: 12px;
+  pointer-events: none;
 }
 
 .marker-container:hover { transform: scale(1.15); z-index: 999 !important; }

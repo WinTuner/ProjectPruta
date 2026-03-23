@@ -19,6 +19,8 @@ interface CityMapProps {
   onAddPosition?: (lat: number, lng: number) => void;
   addMode?: boolean;
   showRanges?: boolean;
+  /** แสดงเส้นร่างเชื่อม “หมุดแบบร่าง” ประเภทเดียวกัน */
+  showConnections?: boolean;
 }
 
 export interface CityDevice {
@@ -32,6 +34,8 @@ export interface CityDevice {
   description?: string;
   /** ระยะครอบคลุมของอุปกรณ์ (เมตร) ถ้ามีจะ override ค่า default ตาม type */
   rangeMeters?: number;
+  /** หมุดแบบร่าง: แสดงเป็นสี่เหลี่ยม + ใช้สำหรับวาดเส้นร่างเชื่อมกัน */
+  sketchPin?: boolean;
 }
 
 // กำหนดสีและไอคอนสำหรับแต่ละประเภทอุปกรณ์
@@ -66,12 +70,13 @@ const deviceIcons: Record<string, { color: string; icon: string; label: string }
 // สถานะอุปกรณ์
 const statusLabels = sharedStatusLabels;
 
-function CityMap({ devices, loading = false, onAddPosition, addMode = false, showRanges = true }: CityMapProps) {
+function CityMap({ devices, loading = false, onAddPosition, addMode = false, showRanges = true, showConnections = true }: CityMapProps) {
   const mapRef = useRef<L.Map | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const tempMarkerRef = useRef<L.Marker | null>(null);
   const markerLayerRef = useRef<L.LayerGroup | null>(null);
   const rangeLayerRef = useRef<L.LayerGroup | null>(null);
+  const connectionLayerRef = useRef<L.LayerGroup | null>(null);
 
   const [isTilesLoading, setIsTilesLoading] = useState(true);
   const [hasInitialTilesLoaded, setHasInitialTilesLoaded] = useState(false);
@@ -155,7 +160,9 @@ function CityMap({ devices, loading = false, onAddPosition, addMode = false, sho
 
     tiles.addTo(map);
 
+    // order matters: ranges (bottom) -> connections -> markers (top)
     rangeLayerRef.current = L.layerGroup().addTo(map);
+    connectionLayerRef.current = L.layerGroup().addTo(map);
     markerLayerRef.current = L.layerGroup().addTo(map);
 
     return () => {
@@ -165,9 +172,72 @@ function CityMap({ devices, loading = false, onAddPosition, addMode = false, sho
       }
       markerLayerRef.current = null;
       rangeLayerRef.current = null;
+      connectionLayerRef.current = null;
       tempMarkerRef.current = null;
     };
   }, []);
+
+  const haversineMeters = (a: Pick<CityDevice, 'lat' | 'lng'>, b: Pick<CityDevice, 'lat' | 'lng'>): number => {
+    // ระยะทางโดยประมาณบนผิวโลก (เมตร)
+    const R = 6371000;
+    const toRad = (deg: number) => (deg * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+
+    const sinDLat = Math.sin(dLat / 2);
+    const sinDLng = Math.sin(dLng / 2);
+    const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+
+  type ConnectionSegment = { type: string; from: CityDevice; to: CityDevice };
+
+  const buildTypeMstConnections = (inputDevices: CityDevice[]): ConnectionSegment[] => {
+    // สร้างเส้นเชื่อมแบบ MST แยกตาม type: เชื่อมครบทุกจุด แต่จำนวนเส้นน้อยที่สุด (n-1)
+    const byType = new Map<string, CityDevice[]>();
+    inputDevices.forEach((d) => {
+      const list = byType.get(d.type) ?? [];
+      list.push(d);
+      byType.set(d.type, list);
+    });
+
+    const segments: ConnectionSegment[] = [];
+    for (const [type, list] of byType.entries()) {
+      if (list.length < 2) continue;
+
+      const inTree = new Array<boolean>(list.length).fill(false);
+      inTree[0] = true;
+      let inCount = 1;
+
+      // Prim's algorithm (O(n^2)) — เหมาะกับจำนวนหมุดระดับหลักสิบ/ร้อย
+      while (inCount < list.length) {
+        let bestFrom = -1;
+        let bestTo = -1;
+        let bestDist = Number.POSITIVE_INFINITY;
+
+        for (let i = 0; i < list.length; i++) {
+          if (!inTree[i]) continue;
+          for (let j = 0; j < list.length; j++) {
+            if (inTree[j]) continue;
+            const dist = haversineMeters(list[i], list[j]);
+            if (dist < bestDist) {
+              bestDist = dist;
+              bestFrom = i;
+              bestTo = j;
+            }
+          }
+        }
+
+        if (bestFrom === -1 || bestTo === -1) break;
+        inTree[bestTo] = true;
+        inCount++;
+        segments.push({ type, from: list[bestFrom], to: list[bestTo] });
+      }
+    }
+    return segments;
+  };
 
   // Show map loading overlay only if initial tiles take longer than 3 seconds
   useEffect(() => {
@@ -235,10 +305,12 @@ function CityMap({ devices, loading = false, onAddPosition, addMode = false, sho
     const map = mapRef.current;
     const markerLayer = markerLayerRef.current;
     const rangeLayer = rangeLayerRef.current;
-    if (!map || !markerLayer || !rangeLayer) return;
+    const connectionLayer = connectionLayerRef.current;
+    if (!map || !markerLayer || !rangeLayer || !connectionLayer) return;
 
     markerLayer.clearLayers();
     rangeLayer.clearLayers();
+    connectionLayer.clearLayers();
 
     visibleDevices.forEach((device) => {
       if (showRanges) {
@@ -246,6 +318,29 @@ function CityMap({ devices, loading = false, onAddPosition, addMode = false, sho
       }
       addDeviceMarker(markerLayer, device);
     });
+
+    if (showConnections) {
+      const sketchDevices = visibleDevices.filter((d) => d.sketchPin);
+      const segments = buildTypeMstConnections(sketchDevices);
+      segments.forEach((seg) => {
+        const typeColor = deviceIcons[seg.type]?.color;
+        if (!typeColor) return;
+        L.polyline(
+          [
+            [seg.from.lat, seg.from.lng],
+            [seg.to.lat, seg.to.lng],
+          ],
+          {
+            color: typeColor,
+            weight: 3,
+            opacity: 0.65,
+            dashArray: '6 8',
+            lineCap: 'round',
+            interactive: false,
+          }
+        ).addTo(connectionLayer);
+      });
+    }
 
     // Update center based on visible devices
     if (visibleDevices.length > 0) {
@@ -259,7 +354,7 @@ function CityMap({ devices, loading = false, onAddPosition, addMode = false, sho
       centerLng /= visibleDevices.length;
       map.setView([centerLat, centerLng], 14);
     }
-  }, [visibleDevices, showRanges]);
+  }, [visibleDevices, showRanges, showConnections]);
 
 const addDeviceMarker = (layer: L.LayerGroup, device: CityDevice) => {
     const deviceInfo = deviceIcons[device.type];
@@ -267,10 +362,12 @@ const addDeviceMarker = (layer: L.LayerGroup, device: CityDevice) => {
     
     const markerColor = statusColors[device.status];
 
+    const markerContainerClass = device.sketchPin ? 'marker-container marker-container--sketch' : 'marker-container';
+
     const customIcon = L.divIcon({
       className: 'custom-marker',
       html: `
-        <div class="marker-container" style="background-color: ${markerColor}">
+        <div class="${markerContainerClass}" style="background-color: ${markerColor}">
           <span class="marker-icon">${deviceInfo.icon}</span>
         </div>
       `,

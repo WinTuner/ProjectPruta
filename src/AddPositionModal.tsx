@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, MapPin, Save } from 'lucide-react';
 import './AddPositionModal.css';
 
@@ -17,6 +17,12 @@ export interface NewPositionData {
   status: 'normal' | 'damaged' | 'repairing';
   lat: number;
   lng: number;
+  /** เลือกหมุดรัศมี (ต้องระบุ radiusMeters) */
+  useRadiusPin: boolean;
+  /** เลือกหมุดแบบร่าง (สี่เหลี่ยม + เส้นเชื่อม) */
+  useSketchPin: boolean;
+  /** รัศมี (เมตร) ใช้เมื่อเลือก useRadiusPin */
+  radiusMeters?: number;
 }
 
 const deviceTypes = [
@@ -39,11 +45,16 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
   const [lat, setLat] = useState(initialLat);
   const [lng, setLng] = useState(initialLng);
 
-  // Update coordinates when props change
-  useState(() => {
+  const [useRadiusPin, setUseRadiusPin] = useState(true);
+  const [useSketchPin, setUseSketchPin] = useState(false);
+  const [radiusMeters, setRadiusMeters] = useState<number>(100);
+
+  // Update coordinates when props change (and when modal opens)
+  useEffect(() => {
+    if (!isOpen) return;
     setLat(initialLat);
     setLng(initialLng);
-  });
+  }, [initialLat, initialLng, isOpen]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,13 +64,29 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
       return;
     }
 
+    if (!useRadiusPin && !useSketchPin) {
+      alert('กรุณาเลือกรูปแบบหมุดอย่างน้อย 1 แบบ');
+      return;
+    }
+
+    const sanitizedRadius = typeof radiusMeters === 'number' ? radiusMeters : parseFloat(String(radiusMeters));
+    if (useRadiusPin) {
+      if (!Number.isFinite(sanitizedRadius) || sanitizedRadius <= 0) {
+        alert('กรุณาระบุรัศมี (เมตร) ให้ถูกต้อง');
+        return;
+      }
+    }
+
     onSave({
       type,
       name: name.trim(),
       description: description.trim(),
       status,
       lat,
-      lng
+      lng,
+      useRadiusPin,
+      useSketchPin,
+      radiusMeters: useRadiusPin ? sanitizedRadius : undefined,
     });
 
     // Reset form
@@ -67,6 +94,9 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
     setDescription('');
     setStatus('normal');
     setType('streetlight');
+    setUseRadiusPin(true);
+    setUseSketchPin(false);
+    setRadiusMeters(100);
     
     onClose();
   };
@@ -102,6 +132,46 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
                 </button>
               ))}
             </div>
+          </div>
+
+          <div className="form-group">
+            <label>รูปแบบหมุด <span className="required">*</span></label>
+            <div className="pin-type-options" role="group" aria-label="รูปแบบหมุด">
+              <label className="pin-type-option">
+                <input
+                  type="checkbox"
+                  checked={useRadiusPin}
+                  onChange={(e) => setUseRadiusPin(e.target.checked)}
+                />
+                <span>หมุดรัศมี</span>
+              </label>
+
+              <label className="pin-type-option">
+                <input
+                  type="checkbox"
+                  checked={useSketchPin}
+                  onChange={(e) => setUseSketchPin(e.target.checked)}
+                />
+                <span>หมุดแบบร่าง (สี่เหลี่ยม + เส้นเชื่อม)</span>
+              </label>
+            </div>
+
+            {useRadiusPin && (
+              <div className="pin-radius-row">
+                <label className="pin-radius-label">รัศมี (เมตร)</label>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={Number.isFinite(radiusMeters) ? radiusMeters : ''}
+                  onChange={(e) => setRadiusMeters(parseFloat(e.target.value))}
+                  className="form-input"
+                  placeholder="เช่น 100"
+                  required
+                />
+                <small className="form-hint">ใช้สำหรับแสดงพื้นที่ครอบคลุมรอบอุปกรณ์</small>
+              </div>
+            )}
           </div>
 
           <div className="form-group">

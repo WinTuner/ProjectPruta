@@ -122,7 +122,11 @@ function App() {
       lng: data.lng,
       status: data.status,
       department: 'เทศบาลตำบลพลูตาหลวง',
-      description: data.description
+      description: data.description,
+      // หมุดรัศมี: ใช้ rangeMeters เป็นรัศมี (เมตร)
+      rangeMeters: data.useRadiusPin ? (data.radiusMeters ?? 0) : 0,
+      // หมุดแบบร่าง: แสดงเป็นสี่เหลี่ยม + ใช้เชื่อมเส้นร่าง
+      sketchPin: data.useSketchPin,
     };
     
     setNewPositions([...newPositions, newDevice]);

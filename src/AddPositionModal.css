@@ -227,3 +227,41 @@
   background-color: #f8fafc;
   border-color: #cbd5e1;
 }
+
+/* Pin type selection */
+.pin-type-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid #e2e8f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.pin-type-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pin-type-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+}
+
+.pin-radius-row {
+  margin-top: 12px;
+}
+
+.pin-radius-label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: #334155;
+  font-size: 0.95rem;
+}
