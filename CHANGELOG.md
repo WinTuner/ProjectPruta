@@ -1,5 +1,75 @@
 # 📝 Change Log - ระบบผังเมืองดิจิทัลเทศบาล
 
+## 🗓️ วันที่ 24 มีนาคม 2026
+
+### 🚀 ปรับระบบครั้งใหญ่สู่ Production-ready
+
+#### 🔴 Critical Bug Fixes
+- แก้ปัญหา payload ของปุ่มแจ้งซ่อม/ร้องเรียนให้ส่งข้อมูลอุปกรณ์ถูกประเภท
+  - ส่ง `deviceId`, `deviceType`, `deviceName`, `status`, `location` ตามอุปกรณ์ที่เลือกจริง
+  - แก้เคสเดิมที่บางหน้าส่งค่า Wi-Fi ID ซ้ำกับทุกประเภท
+- แก้ `AddPositionModal` ให้ sync พิกัดจาก props อย่างถูกต้องผ่าน `useEffect`
+  - เมื่อคลิกแผนที่แล้วเปิด modal จะได้ lat/lng ล่าสุดเสมอ
+- แก้ map reset/recenter ใน `CityMap`
+  - ไม่เรียก set center ทุก re-render
+  - ตั้ง center ครั้งแรกเท่านั้น และคุม behavior ตอนมี/ไม่มีข้อมูล
+- แก้ loading race condition
+  - เปลี่ยนจาก timeout เป็น async flow ที่ปิด loading หลัง fetch ครบจริง
+
+#### 🟡 Refactor โครงสร้างอุปกรณ์
+- สร้างคอมโพเนนต์ใหม่ `DeviceDetail.tsx` สำหรับใช้งานร่วมกันทุกประเภทอุปกรณ์
+- แทนที่โค้ดซ้ำใน
+  - `StreetLight.tsx`
+  - `WifiSpot.tsx`
+  - `FireHydrant.tsx`
+- ลด duplicated UI/logic และรวม pattern การแสดงผลให้เป็นมาตรฐานเดียว
+
+#### 🔵 TypeScript Hardening
+- เพิ่ม model กลางใน `src/types.ts`
+  - `Device`, `StreetLightDevice`, `WifiDevice`, `HydrantDevice` และ input types
+- ลบ `any` ออกจาก flow หลักของระบบแผนที่/ข้อมูล
+- ปรับ type safety ของ parsing และ state management ให้ strict-compatible
+
+#### 🟢 Supabase Integration
+- เพิ่ม client และ schema types ใน `src/lib/supabase.ts`
+- เพิ่ม data service กลางใน `src/lib/data.ts`
+  - อ่านข้อมูลอุปกรณ์จาก Sheets + Supabase แล้ว merge
+  - บันทึกตำแหน่งอุปกรณ์ใหม่ลงตาราง `devices`
+  - บันทึกรายการร้องเรียนลงตาราง `complaints`
+- รองรับกรณีไม่มี env โดย fallback อย่างปลอดภัย
+
+#### 🟠 Routing และ Data Flow
+- เปลี่ยน navigation แบบ state-based เป็น `react-router-dom`
+  - รองรับ back button และ deep link
+  - เส้นทางหลัก: overview + device detail ตามประเภท
+- ย้ายการ fetch ข้อมูลขึ้นระดับ App เพื่อลดการดึงข้อมูลซ้ำ
+- อัปเดต `main.tsx` ให้มี `BrowserRouter` อย่างเป็นทางการ
+
+#### 🗺️ GIS / Leaflet Restriction (Chonburi)
+- คุมพื้นที่ใช้งานแผนที่ให้อยู่ในจังหวัดชลบุรีด้วย `maxBounds`
+- ตั้ง `maxBoundsViscosity = 1.0` เพื่อกันลากออกนอกพื้นที่อย่างเข้มงวด
+- ล็อกระดับการซูม
+  - `minZoom: 10`
+  - `maxZoom: 18`
+- กำหนด initial center เป็น `12.7011, 100.9674`
+- ยังคงฟีเจอร์เดิมครบ: marker, popup, layer logic
+
+#### 📈 Monitoring & Web Vitals
+- เพิ่ม Vercel Analytics (`<Analytics />`) ที่ root ของแอป
+- เพิ่ม Vercel Speed Insights (`<SpeedInsights />`) ที่ root ของแอป
+
+#### 📚 Documentation
+- ปรับ `README.md` ใหม่ทั้งไฟล์ให้ใช้งานจริงได้ดีขึ้น
+  - ภาพรวมระบบ
+  - วิธีติดตั้ง/รัน
+  - คำสั่งที่ใช้บ่อย
+  - Environment variables
+  - แนวทาง deploy และพัฒนาต่อ
+
+#### ✅ Verification
+- ตรวจสอบผ่าน TypeScript typecheck
+- ตรวจสอบผ่าน production build (Vite)
+
 ## 🗓️ วันที่ 11 กุมภาพันธ์ 2026
 
 ### ✨ ฟีเจอร์ใหม่ - ระบบเพิ่มตำแหน่งอุปกรณ์ใหม่

@@ -7,10 +7,21 @@ import {
 } from 'lucide-react';
 import './Sidebar.css'; 
 
+type ComplaintStatus = 'pending' | 'progress' | 'done';
+
+interface ComplaintItem {
+  id: string;
+  date: string;
+  category: 'ไฟถนน' | 'WiFi' | 'ประปาหัวแดง';
+  location: string;
+  status: ComplaintStatus;
+  statusLabel: string;
+}
+
 const Complaint = ({ onBack }: { onBack: () => void }) => {
   
   // ข้อมูลหลัก (Main State)
-  const [complaints, setComplaints] = useState([
+  const [complaints, setComplaints] = useState<ComplaintItem[]>([
     { id: 'C-2024-001', date: '2024-01-15 09:30', category: 'ไฟถนน', location: 'ซอยสุขุมวิท 21 หมู่ 3', status: 'pending', statusLabel: 'รอดำเนินการ' },
     { id: 'C-2024-002', date: '2024-01-14 14:15', category: 'WiFi', location: 'ตลาดสดพลูตาหลวง', status: 'progress', statusLabel: 'กำลังดำเนินการ' },
     // ... (ข้อมูลอื่นๆ)
@@ -21,13 +32,13 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
   // เก็บ ID ของแถวที่กำลังแก้ไข (ถ้าไม่มีให้เป็น null)
   const [editingId, setEditingId] = useState<string | null>(null);
   // เก็บข้อมูลชั่วคราวที่กำลังพิมพ์แก้ไข
-  const [editFormData, setEditFormData] = useState<any>({});
+  const [editFormData, setEditFormData] = useState<ComplaintItem | null>(null);
 
 
   // --- 🆕 ฟังก์ชันต่างๆ ---
 
   // 1. เริ่มแก้ไข: เมื่อกดปุ่มดินสอ
-  const handleStartEdit = (item: any) => {
+  const handleStartEdit = (item: ComplaintItem) => {
     setEditingId(item.id); // บอกระบบว่า "ฉันจะแก้แถวเช็คบิลนี้นะ"
     setEditFormData(item); // ดึงข้อมูลเดิมมาใส่ในฟอร์มชั่วคราว
   };
@@ -35,17 +46,19 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
   // 2. ยกเลิกแก้ไข: เมื่อกดปุ่ม X
   const handleCancelEdit = () => {
     setEditingId(null); // เลิกจำ ID
-    setEditFormData({}); // ล้างข้อมูลชั่วคราว
+    setEditFormData(null); // ล้างข้อมูลชั่วคราว
   };
 
   // 3. จับการพิมพ์: เมื่อพิมพ์ในช่อง Input
   const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    if (!editFormData) return;
     const { name, value } = e.target;
-    setEditFormData({ ...editFormData, [name]: value });
+    setEditFormData({ ...editFormData, [name]: value } as ComplaintItem);
   };
 
   // 4. บันทึก: เมื่อกดปุ่ม Check
   const handleSaveEdit = (id: string) => {
+    if (!editFormData) return;
     // อัปเดต Label ของสถานะให้ตรงกับค่า status ที่เลือกใหม่
     let newStatusLabel = editFormData.statusLabel;
     if (editFormData.status === 'pending') newStatusLabel = 'รอดำเนินการ';
@@ -61,6 +74,7 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
 
     setComplaints(updatedList); // บันทึกข้อมูลใหม่
     setEditingId(null); // ปิดโหมดแก้ไข
+    setEditFormData(null);
   };
 
   // ฟังก์ชันลบ (เดิม)
@@ -132,7 +146,7 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
                     {editingId === item.id ? (
                       <input 
                         type="text" name="date" className="edit-input"
-                        value={editFormData.date} onChange={handleEditFormChange}
+                        value={editFormData?.date ?? ''} onChange={handleEditFormChange}
                       />
                     ) : (
                       <span className="col-date">{item.date}</span>
@@ -142,7 +156,7 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
                   {/* ประเภท (แก้ไขได้ - ใช้ Dropdown) */}
                   <td>
                     {editingId === item.id ? (
-                       <select name="category" className="edit-select" value={editFormData.category} onChange={handleEditFormChange}>
+                       <select name="category" className="edit-select" value={editFormData?.category ?? 'ไฟถนน'} onChange={handleEditFormChange}>
                          <option value="ไฟถนน">ไฟถนน</option>
                          <option value="WiFi">WiFi</option>
                          <option value="ประปาหัวแดง">ประปาหัวแดง</option>
@@ -159,7 +173,7 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
                     {editingId === item.id ? (
                       <input 
                         type="text" name="location" className="edit-input"
-                        value={editFormData.location} onChange={handleEditFormChange} style={{width: '100%'}}
+                        value={editFormData?.location ?? ''} onChange={handleEditFormChange} style={{width: '100%'}}
                       />
                     ) : item.location}
                   </td>
@@ -170,7 +184,7 @@ const Complaint = ({ onBack }: { onBack: () => void }) => {
                   {/* สถานะ (แก้ไขได้ - ใช้ Dropdown) */}
                   <td>
                     {editingId === item.id ? (
-                      <select name="status" className="edit-select" value={editFormData.status} onChange={handleEditFormChange}>
+                      <select name="status" className="edit-select" value={editFormData?.status ?? 'pending'} onChange={handleEditFormChange}>
                         <option value="pending">รอดำเนินการ</option>
                         <option value="progress">กำลังดำเนินการ</option>
                         <option value="done">เสร็จสิ้น</option>

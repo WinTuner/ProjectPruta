@@ -1,393 +1,438 @@
-import { useState, useEffect, useMemo } from 'react';
-// @ts-ignore
-import Papa from 'papaparse';
+import { useEffect, useMemo, useState } from 'react';
+import { Home, MapPin, List, ChevronUp, ChevronDown, Plus } from 'lucide-react';
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import './App.css';
 import './durablearticles.css';
-import { Home, MapPin, List, ChevronUp, ChevronDown, Plus } from 'lucide-react'; 
-import { parseDeviceStatus, getStatusBadgeClass } from './status';
-
-// --- Import Components ---
+import { getStatusBadgeClass, statusLabels } from './status';
+import CityMap from './CityMap.tsx';
+import AddPositionModal, { type NewPositionData } from './AddPositionModal';
 import StreetLight from './StreetLight';
 import WifiSpot from './WifiSpot';
 import FireHydrant from './FireHydrant';
-import CityMap from './CityMap';
-import AddPositionModal, { NewPositionData } from './AddPositionModal';
-// import Complaint from './Complaint'; 
+import { fetchAllDevices, saveComplaint, saveDevicePosition } from './lib/data';
+import type { Device, DeviceType } from './types';
+
+function OverviewPage({
+  devices,
+  loading,
+  addMode,
+  onToggleAddMode,
+  onAddPosition,
+  onOpenDevice,
+  onReportFromMap,
+}: {
+  devices: Device[];
+  loading: boolean;
+  addMode: boolean;
+  onToggleAddMode: () => void;
+  onAddPosition: (lat: number, lng: number) => void;
+  onOpenDevice: (device: Device) => void;
+  onReportFromMap: (device: Device) => void;
+}) {
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const streetLights = devices.filter((device) => device.type === 'streetlight');
+  const wifiSpots = devices.filter((device) => device.type === 'wifi');
+  const hydrants = devices.filter((device) => device.type === 'hydrant');
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
+        <CityMap
+          devices={devices}
+          loading={loading}
+          showRanges
+          addMode={addMode}
+          onAddPosition={onAddPosition}
+          onOpenDevice={onOpenDevice}
+          onReportDevice={onReportFromMap}
+        />
+
+        <button
+          onClick={onToggleAddMode}
+          style={{
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            zIndex: 1000,
+            backgroundColor: addMode ? '#ef4444' : '#10b981',
+            color: 'white',
+            border: 'none',
+            borderRadius: '12px',
+            padding: '12px 20px',
+            fontSize: '1rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            transition: 'all 0.2s',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.transform = 'translateY(-2px)';
+            e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.2)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = 'translateY(0)';
+            e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+          }}
+        >
+          <Plus size={20} />
+          {addMode ? 'ยกเลิก' : 'เพิ่มตำแหน่ง'}
+        </button>
+      </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          right: '20px',
+          width: '380px',
+          height: isPanelOpen ? 'calc(100% - 20px)' : '60px',
+          borderRadius: '16px',
+          marginBottom: isPanelOpen ? '10px' : '0',
+          zIndex: 1000,
+          backgroundColor: 'white',
+          boxShadow: '0 -4px 20px rgba(0,0,0,0.15)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          transition: 'all 0.3s ease-in-out',
+        }}
+      >
+        <div
+          onClick={() => setIsPanelOpen(!isPanelOpen)}
+          style={{
+            minHeight: '60px',
+            background: 'white',
+            borderBottom: '1px solid #f1f5f9',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 1rem',
+            cursor: 'pointer',
+            userSelect: 'none',
+            position: 'relative',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+            <div style={{ background: '#3b82f6', padding: '8px', borderRadius: '8px', color: 'white' }}>
+              <List size={20} />
+            </div>
+            <div>
+              <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1e293b' }}>รายการอุปกรณ์</h3>
+            </div>
+          </div>
+
+          <div style={{ color: '#94a3b8', display: 'flex' }}>
+            {isPanelOpen ? <ChevronDown size={24} /> : <ChevronUp size={24} />}
+          </div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', background: '#f8fafc' }}>
+          <div style={{ marginBottom: '1rem', fontSize: '0.85rem', color: '#64748b' }}>
+            ทั้งหมด {devices.length} จุด
+          </div>
+
+          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>💡 ไฟส่องสว่าง ({streetLights.length})</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+            {streetLights.map((item) => (
+              <div
+                key={`sl-${item.id}`}
+                className="list-card"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/streetlight?id=${encodeURIComponent(item.id)}`);
+                }}
+              >
+                <div className="card-left">
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
+                  <div className="card-sub">{item.name}</div>
+                </div>
+                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
+              </div>
+            ))}
+          </div>
+
+          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>📶 Wi-Fi ({wifiSpots.length})</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+            {wifiSpots.map((item) => (
+              <div
+                key={`wf-${item.id}`}
+                className="list-card"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/wifi?id=${encodeURIComponent(item.id)}`);
+                }}
+              >
+                <div className="card-left">
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
+                  <div className="card-sub">{item.name}</div>
+                </div>
+                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
+              </div>
+            ))}
+          </div>
+
+          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>🚒 ประปา/ดับเพลิง ({hydrants.length})</h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
+            {hydrants.map((item) => (
+              <div
+                key={`hd-${item.id}`}
+                className="list-card"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/devices/hydrant?id=${encodeURIComponent(item.id)}`);
+                }}
+              >
+                <div className="card-left">
+                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
+                  <div className="card-sub">{item.name}</div>
+                </div>
+                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeviceRoutePage({
+  devices,
+  onRefresh,
+  refreshing,
+  onNavigateOverview,
+  onComplaintSubmitted,
+}: {
+  devices: Device[];
+  onRefresh: () => void;
+  refreshing: boolean;
+  onNavigateOverview: () => void;
+  onComplaintSubmitted: () => void;
+}) {
+  const params = useParams<{ type: string }>();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const type = (params.type === 'streetlight' || params.type === 'wifi' || params.type === 'hydrant'
+    ? params.type
+    : 'streetlight') as DeviceType;
+
+  const selectedId = searchParams.get('id') ?? undefined;
+
+  const setSelectedId = (id: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('id', id);
+    setSearchParams(next, { replace: true });
+  };
+
+  return (
+    <div className="device-page" style={{ padding: '20px', background: 'white', height: '100%', overflowY: 'auto' }}>
+      <div className="device-tabs">
+        <button className={type === 'streetlight' ? 'active' : ''} onClick={() => navigate('/devices/streetlight')}>
+          ไฟส่องสว่าง
+        </button>
+        <button className={type === 'wifi' ? 'active' : ''} onClick={() => navigate('/devices/wifi')}>
+          ไวไฟ
+        </button>
+        <button className={type === 'hydrant' ? 'active' : ''} onClick={() => navigate('/devices/hydrant')}>
+          ประปา
+        </button>
+      </div>
+      <div className="device-content">
+        {type === 'streetlight' && (
+          <StreetLight
+            devices={devices}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onRefresh={onRefresh}
+            refreshing={refreshing}
+            onNavigateOverview={onNavigateOverview}
+            onComplaintSubmitted={onComplaintSubmitted}
+          />
+        )}
+        {type === 'wifi' && (
+          <WifiSpot
+            devices={devices}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onRefresh={onRefresh}
+            refreshing={refreshing}
+            onNavigateOverview={onNavigateOverview}
+            onComplaintSubmitted={onComplaintSubmitted}
+          />
+        )}
+        {type === 'hydrant' && (
+          <FireHydrant
+            devices={devices}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onRefresh={onRefresh}
+            refreshing={refreshing}
+            onNavigateOverview={onNavigateOverview}
+            onComplaintSubmitted={onComplaintSubmitted}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 
 function App() {
-  const [page, setPage] = useState('overview');
-  const [deviceTab, setDeviceTab] = useState<'streetlight' | 'wifi' | 'hydrant'>('streetlight');
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [loadingSheets, setLoadingSheets] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<any>)?.detail as
-        | {
-            page?: string;
-            tab?: 'streetlight' | 'wifi' | 'hydrant';
-            selectedId?: string;
-          }
-        | undefined;
-
-      if (!detail) return;
-
-      if (detail.page) {
-        setPage(detail.page);
-      }
-
-      if (detail.page === 'devices') {
-        if (detail.tab) setDeviceTab(detail.tab);
-
-        if (detail.selectedId) {
-          if (detail.tab === 'streetlight') setSelectedStreetId(detail.selectedId);
-          if (detail.tab === 'wifi') setSelectedWifiId(detail.selectedId);
-          if (detail.tab === 'hydrant') setSelectedHydrantId(detail.selectedId);
-        }
-      }
-    };
-
-    window.addEventListener('app:navigate', handler as EventListener);
-    return () => window.removeEventListener('app:navigate', handler as EventListener);
-  }, []);
-
-  // ===== 1. Toggle Panel (เปิด/ปิด) =====
-  const [isPanelOpen, setIsPanelOpen] = useState(false); 
-
-  // ===== Add Position States =====
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [addMode, setAddMode] = useState(false);
   const [tempLat, setTempLat] = useState(0);
   const [tempLng, setTempLng] = useState(0);
-  const [newPositions, setNewPositions] = useState<any[]>([]); 
 
-  // ===== 2. Data States =====
-  const [streetLights, setStreetLights] = useState<any[]>([]);
-  const [wifiSpots, setWifiSpots] = useState<any[]>([]);
-  const [hydrants, setHydrants] = useState<any[]>([]);
-  const [loadingSheets, setLoadingSheets] = useState(false);
-  
-  // Selection States
-  const [selectedStreetId, setSelectedStreetId] = useState<string | null>(null);
-  const [selectedWifiId, setSelectedWifiId] = useState<string | null>(null);
-  const [selectedHydrantId, setSelectedHydrantId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  // ===== 3. Google Sheet Links =====
-  const SHEET_STREETLIGHT = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQv7p9ib0xXet8Alyik_Fi9CdBVvZO8xz73K4k0wEoNqpwIWAKFGIfbk0IkE8knnp-LXvNA6OceINr1/pub?gid=0&single=true&output=csv';
-  const SHEET_WIFI = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQv7p9ib0xXet8Alyik_Fi9CdBVvZO8xz73K4k0wEoNqpwIWAKFGIfbk0IkE8knnp-LXvNA6OceINr1/pub?gid=123712203&single=true&output=csv';
-  const SHEET_HYDRANT = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQv7p9ib0xXet8Alyik_Fi9CdBVvZO8xz73K4k0wEoNqpwIWAKFGIfbk0IkE8knnp-LXvNA6OceINr1/pub?gid=872918807&single=true&output=csv';
+  const loadDevices = async (withRefreshIndicator: boolean) => {
+    if (withRefreshIndicator) {
+      setIsRefreshing(true);
+    } else {
+      setLoadingSheets(true);
+    }
 
-  // ===== 4. Fetch Data =====
-  const fetchSheets = () => {
-    setLoadingSheets(true);
-    Papa.parse(SHEET_STREETLIGHT, { download: true, header: true, complete: (res: any) => { setStreetLights((res.data || []).filter((r: any) => r.ASSET_ID)); } });
-    Papa.parse(SHEET_WIFI, { download: true, header: true, complete: (res: any) => { setWifiSpots((res.data || []).filter((r: any) => r.WIFI_ID)); } });
-    Papa.parse(SHEET_HYDRANT, { download: true, header: true, complete: (res: any) => { setHydrants((res.data || []).filter((r: any) => r.HYDRANT_ID)); } });
-    setTimeout(() => setLoadingSheets(false), 800);
+    try {
+      const data = await fetchAllDevices();
+      setDevices(data);
+    } finally {
+      setLoadingSheets(false);
+      setIsRefreshing(false);
+    }
   };
-  useEffect(() => { fetchSheets(); }, []);
 
-  // ===== 5. แปลงข้อมูล (ตัดระบบสุ่มออกแล้ว!) =====
-  const mapDevices = useMemo(() => {
-    const devices: any[] = [];
+  useEffect(() => {
+    void loadDevices(false);
+  }, []);
 
-    
-    const parseRangeMeters = (row: any): number | undefined => {
-      const raw = row?.RANGE ?? row?.range ?? row?.Range;
-      if (raw === undefined || raw === null || raw === '') return 0;
-      const meters = typeof raw === 'number' ? raw : parseFloat(String(raw));
-      if (!Number.isFinite(meters) || meters <= 0) return 0;
-      return meters;
-    };
-
-    // --- ไฟส่องสว่าง ---
-    streetLights.forEach((item) => {
-      let lat = parseFloat(item.LAT); 
-      let lng = parseFloat(item.LNG || item.LON);
-      
-      // ถ้าไม่มีพิกัด ให้ข้ามไปเลย (ไม่สุ่มแล้ว)
-      if (!lat || !lng || isNaN(lat) || isNaN(lng)) return;
-
-      devices.push({ id: item.ASSET_ID, name: item.LOCATION || `โคมไฟ`, type: 'streetlight', lat, lng, status: parseDeviceStatus(item.STATUS), department: 'เทศบาลตำบลพลูตาหลวง', description: item.LAMP_TYPE || '', rangeMeters: parseRangeMeters(item) });
-    });
-
-    // --- WiFi ---
-    wifiSpots.forEach((item) => {
-      let lat = parseFloat(item.LAT); 
-      let lng = parseFloat(item.LNG || item.LON);
-      
-      if (!lat || !lng || isNaN(lat) || isNaN(lng)) return;
-
-      devices.push({ id: item.WIFI_ID, name: item.LOCATION || `WiFi`, type: 'wifi', lat, lng, status: parseDeviceStatus(item.STATUS), department: 'เทศบาลตำบลพลูตาหลวง', description: item.ISP || '', rangeMeters: parseRangeMeters(item) });
-    });
-
-    // --- ประปา ---
-    hydrants.forEach((item) => {
-      let lat = parseFloat(item.LAT); 
-      let lng = parseFloat(item.LNG || item.LON);
-      
-      if (!lat || !lng || isNaN(lat) || isNaN(lng)) return;
-
-      devices.push({ id: item.HYDRANT_ID, name: item.LOCATION || `ประปา`, type: 'hydrant', lat, lng, status: parseDeviceStatus(item.STATUS), department: 'เทศบาลตำบลพลูตาหลวง', description: item.PRESSURE || '', rangeMeters: parseRangeMeters(item) });
-    });
-
-    // --- เพิ่มตำแหน่งใหม่ที่สร้างเอง ---
-    newPositions.forEach((item) => {
-      devices.push(item);
-    });
-
-    return devices;
-  }, [streetLights, wifiSpots, hydrants, newPositions, newPositions]); 
-
-  // ===== Handle Add Position =====
   const handleAddPosition = (lat: number, lng: number) => {
     setTempLat(lat);
     setTempLng(lng);
     setIsAddModalOpen(true);
   };
 
-  const handleSavePosition = (data: NewPositionData) => {
-    const newDevice = {
-      id: `NEW-${Date.now()}`,
-      name: data.name,
-      type: data.type,
-      lat: data.lat,
-      lng: data.lng,
-      status: data.status,
-      department: 'เทศบาลตำบลพลูตาหลวง',
-      description: data.description,
-      // หมุดรัศมี: ใช้ rangeMeters เป็นรัศมี (เมตร)
-      rangeMeters: data.useRadiusPin ? (data.radiusMeters ?? 0) : 0,
-      // หมุดแบบร่าง: แสดงเป็นสี่เหลี่ยม + ใช้เชื่อมเส้นร่าง
-      sketchPin: data.useSketchPin,
-    };
-    
-    setNewPositions([...newPositions, newDevice]);
+  const handleSavePosition = async (data: NewPositionData) => {
+    const newDevice = await saveDevicePosition(data);
+    setDevices((prev) => [...prev, newDevice]);
     setAddMode(false);
     alert('เพิ่มตำแหน่งใหม่สำเร็จ!');
   };
 
   const toggleAddMode = () => {
-    setAddMode(!addMode);
-    if (!addMode) {
+    const next = !addMode;
+    setAddMode(next);
+    if (next) {
       alert('คลิกบนแผนที่เพื่อเลือกตำแหน่งที่ต้องการเพิ่ม');
     }
-  }; 
+  };
 
-  // if (page === 'complaint') return <Complaint onBack={() => setPage('overview')} />;
+  const handleOpenDevice = (device: Device) => {
+    navigate(`/devices/${device.type}?id=${encodeURIComponent(device.id)}`);
+  };
+
+  const handleReportFromMap = async (device: Device) => {
+    try {
+      await saveComplaint({
+        deviceId: device.id,
+        deviceType: device.type,
+        deviceName: device.name,
+        location: `${device.lat.toFixed(6)}, ${device.lng.toFixed(6)}`,
+        status: statusLabels[device.status],
+      });
+      alert(`บันทึกเรื่องร้องเรียนเรียบร้อย\n\nรหัสอุปกรณ์: ${device.id}\nชื่อ: ${device.name}\nสถานะ: ${statusLabels[device.status]}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'เกิดข้อผิดพลาดในการบันทึก';
+      alert(`บันทึกเรื่องร้องเรียนไม่สำเร็จ: ${message}`);
+    }
+  };
+
+  const activeMenu = useMemo<'overview' | 'devices'>(() => {
+    if (location.pathname.startsWith('/devices')) return 'devices';
+    return 'overview';
+  }, [location.pathname]);
 
   return (
     <div className="app-container" style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden' }}>
-
-      {/* --- 1. Sidebar ซ้าย --- */}
       <aside className="shared-sidebar" style={{ width: '250px', flexShrink: 0, zIndex: 20 }}>
         <div className="sidebar-left-header">
-          <div className="logo-icon"><Home size={20} color="white" /></div>
-          <div><h3>เทศบาลตำบล</h3><p>พลูตาหลวง</p></div>
+          <div className="logo-icon">
+            <Home size={20} color="white" />
+          </div>
+          <div>
+            <h3>เทศบาลตำบล</h3>
+            <p>พลูตาหลวง</p>
+          </div>
         </div>
         <div className="menu-list">
-          <div className={`menu-item ${page==='overview'?'active':''}`} onClick={()=>setPage('overview')}><Home size={18}/> ภาพรวม</div>
-          <div className={`menu-item ${page==='devices'?'active':''}`} onClick={()=>setPage('devices')}><MapPin size={18}/> อุปกรณ์</div>
+          <NavLink to="/" className={`menu-item ${activeMenu === 'overview' ? 'active' : ''}`}>
+            <Home size={18} /> ภาพรวม
+          </NavLink>
+          <NavLink to="/devices/streetlight" className={`menu-item ${activeMenu === 'devices' ? 'active' : ''}`}>
+            <MapPin size={18} /> อุปกรณ์
+          </NavLink>
         </div>
       </aside>
 
-      {/* --- 2. พื้นที่หลัก (ขวา) --- */}
       <main style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-        
-        {/* กรณีหน้า Overview */}
-        {page === 'overview' && (
-          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            
-            {/* A. แผนที่ */}
-            <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
-              <CityMap
-                devices={mapDevices}
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <OverviewPage
+                devices={devices}
                 loading={loadingSheets}
-                showRanges
                 addMode={addMode}
+                onToggleAddMode={toggleAddMode}
                 onAddPosition={handleAddPosition}
+                onOpenDevice={handleOpenDevice}
+                onReportFromMap={handleReportFromMap}
               />
-
-              
-              {/* ปุ่มเพิ่มตำแหน่ง */}
-              <button
-                onClick={toggleAddMode}
-                style={{
-                  position: 'absolute',
-                  top: '20px',
-                  right: '20px',
-                  zIndex: 1000,
-                  backgroundColor: addMode ? '#ef4444' : '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '12px',
-                  padding: '12px 20px',
-                  fontSize: '1rem',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-                  transition: 'all 0.2s'
+            }
+          />
+          <Route
+            path="/devices/:type"
+            element={
+              <DeviceRoutePage
+                devices={devices}
+                onRefresh={() => {
+                  void loadDevices(true);
                 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-2px)';
-                  e.currentTarget.style.boxShadow = '0 6px 16px rgba(0,0,0,0.2)';
+                refreshing={isRefreshing}
+                onNavigateOverview={() => navigate('/')}
+                onComplaintSubmitted={() => {
+                  // no-op hook for future analytics
                 }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-                }}
-              >
-                <Plus size={20} />
-                {addMode ? 'ยกเลิก' : 'เพิ่มตำแหน่ง'}
-              </button>
-            </div>
+              />
+            }
+          />
+          <Route path="/devices" element={<Navigate to="/devices/streetlight" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
 
-            {/* B. Slide Panel (Click to Toggle) */}
-            <div 
-              style={{
-                position: 'absolute',
-                bottom: 0,       
-                right: '20px',   
-                width: '380px',  
-                
-                // Toggle ความสูง
-                height: isPanelOpen ? 'calc(100% - 20px)' : '60px', 
-                borderRadius: '16px',
-                marginBottom: isPanelOpen ? '10px' : '0',
-                
-                zIndex: 1000,
-                backgroundColor: 'white',
-                boxShadow: '0 -4px 20px rgba(0,0,0,0.15)',
-                display: 'flex',
-                flexDirection: 'column',
-                overflow: 'hidden',
-                transition: 'all 0.3s ease-in-out'
-              }}
-            >
-              {/* Header (คลิกเพื่อเปิด/ปิด) */}
-              <div 
-                onClick={() => setIsPanelOpen(!isPanelOpen)}
-                style={{
-                  minHeight: '60px',
-                  background: 'white',
-                  borderBottom: '1px solid #f1f5f9',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '0 1rem',
-                  cursor: 'pointer',
-                  userSelect: 'none',
-                  position: 'relative'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                  <div style={{ background: '#3b82f6', padding: '8px', borderRadius: '8px', color: 'white' }}>
-                    <List size={20} />
-                  </div>
-                  <div>
-                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700, color: '#1e293b' }}>รายการอุปกรณ์</h3>
-                  </div>
-                </div>
-
-                <div style={{ color: '#94a3b8', display: 'flex' }}>
-                   {isPanelOpen ? <ChevronDown size={24}/> : <ChevronUp size={24}/>}
-                </div>
-              </div>
-
-              {/* Content List */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '1rem', background: '#f8fafc' }}>
-                
-                <div style={{marginBottom: '1rem', fontSize: '0.85rem', color: '#64748b'}}>
-                  ทั้งหมด {streetLights.length + wifiSpots.length + hydrants.length} จุด
-                </div>
-
-                {/* ไฟส่องสว่าง */}
-                <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>💡 ไฟส่องสว่าง ({streetLights.length})</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                  {streetLights.map((it,i)=>(
-                    <div key={`sl-${i}`} className="list-card" onClick={(e) => { e.stopPropagation(); setSelectedStreetId(it.ASSET_ID || null); setPage('streetlight'); }}>
-                      <div className="card-left">
-                        <div style={{fontWeight:600, fontSize:'0.9rem'}}>#{it.ASSET_ID}</div>
-                        <div className="card-sub">{it.LOCATION}</div>
-                      </div>
-                       <div className={`status-pill ${getStatusBadgeClass(it.STATUS)}`}>
-                         {it.STATUS || '-'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* WiFi */}
-                <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>📶 Wi-Fi ({wifiSpots.length})</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                  {wifiSpots.map((it,i)=>(
-                    <div key={`wf-${i}`} className="list-card" onClick={(e) => { e.stopPropagation(); setSelectedWifiId(it.WIFI_ID || null); setPage('wifi'); }}>
-                       <div className="card-left">
-                        <div style={{fontWeight:600, fontSize:'0.9rem'}}>#{it.WIFI_ID}</div>
-                        <div className="card-sub">{it.LOCATION}</div>
-                      </div>
-                       <div className={`status-pill ${getStatusBadgeClass(it.STATUS)}`}>
-                         {it.STATUS || '-'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                {/* ประปา */}
-                <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>🚒 ประปา/ดับเพลิง ({hydrants.length})</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                  {hydrants.map((it,i)=>(
-                    <div key={`hd-${i}`} className="list-card" onClick={(e) => { e.stopPropagation(); setSelectedHydrantId(it.HYDRANT_ID || null); setPage('firehydrant'); }}>
-                      <div className="card-left">
-                        <div style={{fontWeight:600, fontSize:'0.9rem'}}>#{it.HYDRANT_ID}</div>
-                        <div className="card-sub">{it.LOCATION}</div>
-                      </div>
-                       <div className={`status-pill ${getStatusBadgeClass(it.STATUS)}`}>
-                         {it.STATUS || '-'}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* กรณีหน้า Detail */}
-        {page === 'streetlight' && <StreetLight selectedId={selectedStreetId ?? undefined} />}
-        {page === 'wifi' && <WifiSpot selectedId={selectedWifiId ?? undefined} />}
-        {page === 'firehydrant' && <FireHydrant selectedId={selectedHydrantId ?? undefined} />}
-        
-        {/* กรณีหน้า Devices */}
-        {page === 'devices' && (
-          <div className="device-page" style={{ padding: '20px', background: 'white', height: '100%', overflowY: 'auto' }}>
-            <div className="device-tabs">
-              <button className={deviceTab==='streetlight'?'active':''} onClick={()=>setDeviceTab('streetlight')}>ไฟส่องสว่าง</button>
-              <button className={deviceTab==='wifi'?'active':''} onClick={()=>setDeviceTab('wifi')}>ไวไฟ</button>
-              <button className={deviceTab==='hydrant'?'active':''} onClick={()=>setDeviceTab('hydrant')}>ประปา</button>
-            </div>
-            <div className="device-content">
-              {deviceTab==='streetlight' && <StreetLight selectedId={selectedStreetId ?? undefined} />}
-              {deviceTab==='wifi' && <WifiSpot selectedId={selectedWifiId ?? undefined} />}
-              {deviceTab==='hydrant' && <FireHydrant selectedId={selectedHydrantId ?? undefined} />}
-            </div>
-          </div>
-        )}
-
-      </main>      
-      {/* Add Position Modal */}
       <AddPositionModal
         isOpen={isAddModalOpen}
         onClose={() => {
           setIsAddModalOpen(false);
           setAddMode(false);
         }}
-        onSave={handleSavePosition}
+        onSave={(data) => {
+          void handleSavePosition(data);
+        }}
         initialLat={tempLat}
         initialLng={tempLng}
-      />    </div>
+      />
+    </div>
   );
 }
 

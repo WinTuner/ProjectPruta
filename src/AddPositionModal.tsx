@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X, MapPin, Save } from 'lucide-react';
 import './AddPositionModal.css';
+import type { DeviceStatus } from './status';
 
 interface AddPositionModalProps {
   isOpen: boolean;
@@ -14,7 +15,7 @@ export interface NewPositionData {
   type: 'streetlight' | 'wifi' | 'hydrant';
   name: string;
   description: string;
-  status: 'normal' | 'damaged' | 'repairing';
+  status: DeviceStatus;
   lat: number;
   lng: number;
   /** เลือกหมุดรัศมี (ต้องระบุ radiusMeters) */
@@ -25,23 +26,30 @@ export interface NewPositionData {
   radiusMeters?: number;
 }
 
-const deviceTypes = [
+const deviceTypes: Array<{ value: NewPositionData['type']; label: string; icon: string }> = [
   { value: 'streetlight', label: '💡 ไฟส่องสว่าง', icon: '💡' },
   { value: 'wifi', label: '📶 Wi-Fi สาธารณะ', icon: '📶' },
   { value: 'hydrant', label: '🚒 ประปา/ดับเพลิง', icon: '🚒' }
 ];
 
-const statusOptions = [
+const statusOptions: Array<{ value: DeviceStatus; label: string }> = [
   { value: 'normal', label: '✓ ปกติ' },
   { value: 'damaged', label: '⚠️ ชำรุด' },
   { value: 'repairing', label: '🔧 กำลังซ่อม' }
 ];
 
+function toDeviceStatus(value: string): DeviceStatus {
+  if (value === 'normal' || value === 'damaged' || value === 'repairing') {
+    return value;
+  }
+  return 'normal';
+}
+
 function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng = 0 }: AddPositionModalProps) {
   const [type, setType] = useState<'streetlight' | 'wifi' | 'hydrant'>('streetlight');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<'normal' | 'damaged' | 'repairing'>('normal');
+  const [status, setStatus] = useState<DeviceStatus>('normal');
   const [lat, setLat] = useState(initialLat);
   const [lng, setLng] = useState(initialLng);
 
@@ -125,7 +133,7 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
                   key={dt.value}
                   type="button"
                   className={`device-type-button ${type === dt.value ? 'active' : ''}`}
-                  onClick={() => setType(dt.value as any)}
+                  onClick={() => setType(dt.value)}
                 >
                   <span className="device-icon">{dt.icon}</span>
                   <span className="device-label">{dt.label}</span>
@@ -213,7 +221,7 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
             <label>สถานะ</label>
             <select
               value={status}
-              onChange={(e) => setStatus(e.target.value as any)}
+              onChange={(e) => setStatus(toDeviceStatus(e.target.value))}
               className="form-select"
             >
               {statusOptions.map((opt) => (

@@ -1,51 +1,104 @@
-# Project พลูตาหลวง
+# Smart City Map - เทศบาลตำบลพลูตาหลวง
 
-Web application พัฒนาด้วย React + TypeScript และ Vite
+ระบบแผนที่เมืองอัจฉริยะสำหรับติดตามอุปกรณ์สาธารณะในพื้นที่ พร้อมหน้ารายละเอียดอุปกรณ์ การเพิ่มตำแหน่งใหม่ และระบบแจ้งซ่อม/ร้องเรียน
 
----
+## ภาพรวมระบบ
 
-## Description
+โปรเจกต์นี้พัฒนาด้วย React + TypeScript + Vite โดยใช้ Leaflet แสดงแผนที่ และรองรับการเชื่อมต่อ Supabase สำหรับบันทึกข้อมูลจริง
 
-โปรเจกต์นี้เป็นเว็บแอปสำหรับทดลอง/พัฒนา โครงสร้างหน้าเว็บแบบมี
-- left sidebar
-- main content (เช่น map หรือหน้าหลัก)
-- right sidebar
-- หน้าร้องเรียน (Complaint)
-- 
+ความสามารถหลัก
 
-โดยแยก component และ styles ออกเป็นไฟล์ชัดเจน
-
----
+- แผนที่อุปกรณ์สาธารณะ (ไฟส่องสว่าง, Wi-Fi, หัวดับเพลิง)
+- แสดง Marker, Popup, และสถานะอุปกรณ์
+- เพิ่มตำแหน่งอุปกรณ์ใหม่ผ่านแผนที่
+- หน้ารายละเอียดอุปกรณ์แบบรวมศูนย์ด้วยคอมโพเนนต์เดียว
+- แจ้งซ่อม/ร้องเรียน และบันทึกเข้า Supabase
+- รองรับเส้นทางด้วย React Router (Back button และ deep link)
+- มี Vercel Analytics และ Speed Insights
 
 ## Tech Stack
 
-- React
-- TypeScript
+- React 18
+- TypeScript (strict)
 - Vite
-- CSS
-- lucide-react (icons)
+- Leaflet
+- React Router DOM
+- Supabase JS
+- Papa Parse (อ่าน CSV)
+- Lucide React (icons)
+- Vercel Analytics / Speed Insights
 
----
+## โครงสร้างโปรเจกต์
 
-## Project Structure (ไฟล์สำคัญ)
+ไฟล์สำคัญที่ควรรู้
 
-src/
- ├─ main.tsx          // entry point
- ├─ App.tsx           // layout หลัก
- ├─ Complaint.tsx     // หน้าร้องเรียน
- ├─ App.css           // styles หลัก
- ├─ Complaint.css    // styles หน้าร้องเรียน
- └─ index.css         // base styles
+- src/App.tsx: โครงแอปหลัก, routing, data flow
+- src/CityMap.tsx: แผนที่ Leaflet, marker, popup, layer logic
+- src/DeviceDetail.tsx: หน้ารายละเอียดอุปกรณ์แบบ generic
+- src/lib/data.ts: service สำหรับอ่านข้อมูลและบันทึกลงฐานข้อมูล
+- src/lib/supabase.ts: Supabase client + types
+- src/types.ts: Domain model ทั้งระบบ
+- src/status.ts: มาตรฐานสถานะอุปกรณ์และสี
+- src/main.tsx: React entrypoint และ global providers
 
-## Installation
+## เริ่มต้นใช้งาน
+
+1. ติดตั้ง dependencies
 
 ```bash
 npm install
+```
 
----
-
-```md
-## Run
+2. รันในโหมดพัฒนา
 
 ```bash
 npm run dev
+```
+
+3. เปิด URL ที่ Vite แสดงในเทอร์มินัล (ปกติเป็น http://localhost:5173)
+
+## Environment Variables
+
+สร้างไฟล์ .env ใน root ของโปรเจกต์ (ถ้ายังไม่มี)
+
+```bash
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+```
+
+หมายเหตุ
+
+- ถ้าไม่ตั้งค่า Supabase ระบบจะแสดงข้อมูลจากแหล่งข้อมูลเดิมได้ตามปกติ
+- ฟังก์ชันบันทึกลงฐานข้อมูลจะถูกข้ามโดยอัตโนมัติเมื่อ env ไม่ครบ
+
+## คำสั่งที่ใช้บ่อย
+
+```bash
+npm run dev        # Development server
+npm run typecheck  # ตรวจ TypeScript
+npm run lint       # ตรวจ lint
+npm run build      # Build production
+npm run preview    # Preview build
+```
+
+## การ Deploy
+
+แนะนำ deploy บน Vercel
+
+1. Push โค้ดขึ้น repository
+2. เชื่อมโปรเจกต์กับ Vercel
+3. ตั้งค่า Environment Variables ในหน้า Project Settings
+4. Deploy แล้วเปิดใช้งานหน้าเว็บ
+
+หลัง deploy แล้ว ระบบ Analytics และ Speed Insights จะเริ่มเก็บข้อมูลเมื่อมีการเข้าใช้งานจริง
+
+## แนวทางพัฒนาเพิ่มเติม
+
+- เพิ่ม authentication/role-based access
+- เพิ่ม table migration และ seed สำหรับ Supabase
+- เพิ่ม unit test ให้ data mappers และ integration test ด้าน routing/map
+- เพิ่ม error boundary และระบบแจ้งเตือนแบบ toast แทน alert
+
+## License
+
+Internal project for municipal operations and development use.
