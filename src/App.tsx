@@ -7,16 +7,18 @@ import { getStatusBadgeClass, statusLabels } from './status';
 import CityMap from './CityMap.tsx';
 import AddPositionModal from './AddPositionModal';
 import ReportFormModal from './ReportFormModal';
-import StreetLight from './StreetLight';
-import WifiSpot from './WifiSpot';
-import FireHydrant from './FireHydrant';
-import { fetchAllDevices, saveDevicePosition } from './lib/data';
+import DeviceDetail from './DeviceDetail';
+import { getDeviceTypeMeta, isKnownDeviceType, KNOWN_DEVICE_TYPE_ORDER, parseCustomTypeFromDescription } from './deviceTypeMeta';
+import { fetchAllDevices, saveDevicePosition, syncPendingDevices } from './lib/data';
+import { isSupabaseEnabled, supabase } from './lib/supabase';
+import { fetchCustomDeviceTypes, type CustomDeviceType } from './lib/customDeviceTypes';
 import type { Device, DeviceType, NewDeviceInput } from './types';
 
 
 
 function OverviewPage({
   devices,
+  customTypes,
   loading,
   addMode,
   onToggleAddMode,
@@ -25,6 +27,7 @@ function OverviewPage({
   onReportFromMap,
 }: {
   devices: Device[];
+  customTypes: CustomDeviceType[];
   loading: boolean;
   addMode: boolean;
   onToggleAddMode: () => void;
@@ -35,15 +38,30 @@ function OverviewPage({
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const navigate = useNavigate();
 
-  const streetLights = devices.filter((device) => device.type === 'streetlight');
-  const wifiSpots = devices.filter((device) => device.type === 'wifi');
-  const hydrants = devices.filter((device) => device.type === 'hydrant');
+  const groupedDevices = useMemo(() => {
+    const groups = new Map<string, Device[]>();
+    devices.forEach((device) => {
+      const list = groups.get(device.type) ?? [];
+      list.push(device);
+      groups.set(device.type, list);
+    });
+
+    return Array.from(groups.entries()).sort(([typeA], [typeB]) => {
+      const idxA = KNOWN_DEVICE_TYPE_ORDER.findIndex((item) => item === typeA);
+      const idxB = KNOWN_DEVICE_TYPE_ORDER.findIndex((item) => item === typeB);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return typeA.localeCompare(typeB, 'th');
+    });
+  }, [devices]);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 1 }}>
         <CityMap
           devices={devices}
+          customTypes={customTypes}
           loading={loading}
           showRanges
           addMode={addMode}
@@ -140,65 +158,35 @@ function OverviewPage({
             ทั้งหมด {devices.length} จุด
           </div>
 
-          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>💡 ไฟส่องสว่าง ({streetLights.length})</h4>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-            {streetLights.map((item) => (
-              <div
-                key={`sl-${item.id}`}
-                className="list-card"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/devices/streetlight?id=${encodeURIComponent(item.id)}`);
-                }}
-              >
-                <div className="card-left">
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
-                  <div className="card-sub">{item.name}</div>
+          {groupedDevices.map(([type, items]) => {
+            const customMeta = customTypes.find((item) => item.typeCode === type);
+            const meta = getDeviceTypeMeta(type, customMeta ?? parseCustomTypeFromDescription(items[0]?.description));
+            return (
+              <div key={type} style={{ marginBottom: '1.5rem' }}>
+                <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>
+                  {meta.icon} {meta.label} ({items.length})
+                </h4>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {items.map((item) => (
+                    <div
+                      key={`${type}-${item.id}`}
+                      className="list-card"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/devices/${encodeURIComponent(item.type)}?id=${encodeURIComponent(item.id)}`);
+                      }}
+                    >
+                      <div className="card-left">
+                        <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
+                        <div className="card-sub">{item.name}</div>
+                      </div>
+                      <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
+                    </div>
+                  ))}
                 </div>
-                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
               </div>
-            ))}
-          </div>
-
-          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>📶 Wi-Fi ({wifiSpots.length})</h4>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-            {wifiSpots.map((item) => (
-              <div
-                key={`wf-${item.id}`}
-                className="list-card"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/devices/wifi?id=${encodeURIComponent(item.id)}`);
-                }}
-              >
-                <div className="card-left">
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
-                  <div className="card-sub">{item.name}</div>
-                </div>
-                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
-              </div>
-            ))}
-          </div>
-
-          <h4 style={{ fontSize: '0.85rem', color: '#64748b', margin: '0 0 0.5rem 0' }}>🚒 ประปา/ดับเพลิง ({hydrants.length})</h4>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1.5rem' }}>
-            {hydrants.map((item) => (
-              <div
-                key={`hd-${item.id}`}
-                className="list-card"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigate(`/devices/hydrant?id=${encodeURIComponent(item.id)}`);
-                }}
-              >
-                <div className="card-left">
-                  <div style={{ fontWeight: 600, fontSize: '0.9rem' }}>#{item.id}</div>
-                  <div className="card-sub">{item.name}</div>
-                </div>
-                <div className={`status-pill ${getStatusBadgeClass(statusLabels[item.status])}`}>{statusLabels[item.status]}</div>
-              </div>
-            ))}
-          </div>
+            );
+          })}
         </div>
       </div>
     </div>
@@ -207,6 +195,7 @@ function OverviewPage({
 
 function DeviceRoutePage({
   devices,
+  customTypes,
   onRefresh,
   refreshing,
   onNavigateOverview,
@@ -214,6 +203,7 @@ function DeviceRoutePage({
   onOpenReport,
 }: {
   devices: Device[];
+  customTypes: CustomDeviceType[];
   onRefresh: () => void;
   refreshing: boolean;
   onNavigateOverview: () => void;
@@ -224,9 +214,21 @@ function DeviceRoutePage({
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const type = (params.type === 'streetlight' || params.type === 'wifi' || params.type === 'hydrant'
-    ? params.type
-    : 'streetlight') as DeviceType;
+  const availableTypes = useMemo(() => {
+    const set = new Set<string>();
+    devices.forEach((item) => set.add(item.type));
+
+    const known = KNOWN_DEVICE_TYPE_ORDER.filter((item) => set.has(item));
+    const custom = Array.from(set)
+      .filter((item) => !isKnownDeviceType(item))
+      .sort((a, b) => a.localeCompare(b, 'th'));
+
+    return [...known, ...custom];
+  }, [devices]);
+
+  const routeType = params.type ? decodeURIComponent(params.type) : '';
+  const fallbackType = availableTypes[0] ?? 'streetlight';
+  const type = (availableTypes.includes(routeType) ? routeType : fallbackType) as DeviceType;
 
   const selectedId = searchParams.get('id') ?? undefined;
 
@@ -239,53 +241,34 @@ function DeviceRoutePage({
   return (
     <div className="device-page" style={{ padding: '20px', background: 'white', height: '100%', overflowY: 'auto' }}>
       <div className="device-tabs">
-        <button className={type === 'streetlight' ? 'active' : ''} onClick={() => navigate('/devices/streetlight')}>
-          ไฟส่องสว่าง
-        </button>
-        <button className={type === 'wifi' ? 'active' : ''} onClick={() => navigate('/devices/wifi')}>
-          ไวไฟ
-        </button>
-        <button className={type === 'hydrant' ? 'active' : ''} onClick={() => navigate('/devices/hydrant')}>
-          ประปา
-        </button>
+        {availableTypes.map((tabType) => {
+          const customMeta = customTypes.find((item) => item.typeCode === tabType);
+          const firstDevice = devices.find((item) => item.type === tabType);
+          const meta = getDeviceTypeMeta(tabType, customMeta ?? parseCustomTypeFromDescription(firstDevice?.description));
+          return (
+            <button
+              key={tabType}
+              className={type === tabType ? 'active' : ''}
+              onClick={() => navigate(`/devices/${encodeURIComponent(tabType)}`)}
+            >
+              {meta.label}
+            </button>
+          );
+        })}
       </div>
       <div className="device-content">
-        {type === 'streetlight' && (
-          <StreetLight
-            devices={devices}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onRefresh={onRefresh}
-            refreshing={refreshing}
-            onNavigateOverview={onNavigateOverview}
-            onComplaintSubmitted={onComplaintSubmitted}
-            onOpenReport={onOpenReport}
-          />
-        )}
-        {type === 'wifi' && (
-          <WifiSpot
-            devices={devices}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onRefresh={onRefresh}
-            refreshing={refreshing}
-            onNavigateOverview={onNavigateOverview}
-            onComplaintSubmitted={onComplaintSubmitted}
-            onOpenReport={onOpenReport}
-          />
-        )}
-        {type === 'hydrant' && (
-          <FireHydrant
-            devices={devices}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onRefresh={onRefresh}
-            refreshing={refreshing}
-            onNavigateOverview={onNavigateOverview}
-            onComplaintSubmitted={onComplaintSubmitted}
-            onOpenReport={onOpenReport}
-          />
-        )}
+        <DeviceDetail
+          type={type}
+          devices={devices}
+          customTypes={customTypes}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onRefresh={onRefresh}
+          refreshing={refreshing}
+          onNavigateOverview={onNavigateOverview}
+          onComplaintSubmitted={onComplaintSubmitted}
+          onOpenReport={onOpenReport}
+        />
       </div>
     </div>
   );
@@ -302,6 +285,7 @@ function App() {
   const [tempLng, setTempLng] = useState(0);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [reportTarget, setReportTarget] = useState<Device | null>(null);
+  const [customTypes, setCustomTypes] = useState<CustomDeviceType[]>([]);
 
   const navigate = useNavigate();
   const location = useLocation();
@@ -315,13 +299,25 @@ function App() {
 
     try {
       const data = await fetchAllDevices();
+      const sampleDevice = data.length > 0 ? data[0] : null;
       console.debug('[App] loadDevices fetched:', {
-        count: data.length,
+        totalCount: data.length,
         byType: {
           streetlight: data.filter((d) => d.type === 'streetlight').length,
           wifi: data.filter((d) => d.type === 'wifi').length,
           hydrant: data.filter((d) => d.type === 'hydrant').length,
         },
+        sampleDevice: sampleDevice
+          ? {
+              id: sampleDevice.id,
+              name: sampleDevice.name,
+              type: sampleDevice.type,
+              status: sampleDevice.status,
+              source: sampleDevice.source,
+              syncStatus: sampleDevice.syncStatus,
+              department: sampleDevice.department,
+            }
+          : null,
       });
       setDevices(data);
     } finally {
@@ -331,7 +327,68 @@ function App() {
   };
 
   useEffect(() => {
-    void loadDevices(false);
+    let disposed = false;
+
+    const bootstrap = async () => {
+      await syncPendingDevices();
+      if (disposed) return;
+      await loadDevices(false);
+    };
+
+    void bootstrap();
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleOnline = () => {
+      void (async () => {
+        const result = await syncPendingDevices();
+        if (result.attempted > 0) {
+          await loadDevices(true);
+        }
+      })();
+    };
+
+    window.addEventListener('online', handleOnline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSupabaseEnabled || !supabase) return;
+    const client = supabase;
+
+    const channel = client
+      .channel('realtime-devices')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'devices' },
+        (payload) => {
+          console.debug('[App] realtime devices change:', {
+            event: payload.eventType,
+            table: payload.table,
+          });
+          void loadDevices(true);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void client.removeChannel(channel);
+    };
+  }, []);
+
+  useEffect(() => {
+    const loadCustomTypes = async () => {
+      const data = await fetchCustomDeviceTypes();
+      setCustomTypes(data);
+    };
+
+    void loadCustomTypes();
   }, []);
 
   useEffect(() => {
@@ -348,18 +405,24 @@ function App() {
   };
 
   const handleSavePosition = async (data: NewDeviceInput) => {
-    const newDevice = await saveDevicePosition(data);
-    console.debug('[App] saveDevicePosition returned:', newDevice);
+    try {
+      const newDevice = await saveDevicePosition(data);
+      console.debug('[App] saveDevicePosition returned:', newDevice);
 
-    setDevices((prev) => {
-      const exists = prev.some((item) => item.type === newDevice.type && item.id === newDevice.id);
-      if (exists) return prev;
-      return [...prev, newDevice];
-    });
+      setDevices((prev) => {
+        const exists = prev.some((item) => item.type === newDevice.type && item.id === newDevice.id);
+        if (exists) return prev;
+        return [...prev, newDevice];
+      });
 
-    await loadDevices(true);
-    setAddMode(false);
-    alert('เพิ่มตำแหน่งใหม่สำเร็จ!');
+      await loadDevices(true);
+      setAddMode(false);
+      alert('เพิ่มตำแหน่งใหม่สำเร็จ!');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ไม่สามารถบันทึกตำแหน่งอุปกรณ์ได้';
+      console.error('[App] failed to save device position:', error);
+      alert(`บันทึกไม่สำเร็จ: ${message}`);
+    }
   };
 
   const toggleAddMode = () => {
@@ -377,6 +440,11 @@ function App() {
   const handleReportFromMap = (device: Device) => {
     if (reportTarget !== null) return;
     setReportTarget(device);
+  };
+
+  const reloadCustomTypes = async () => {
+    const data = await fetchCustomDeviceTypes();
+    setCustomTypes(data);
   };
 
   const activeMenu = useMemo<'overview' | 'devices'>(() => {
@@ -438,6 +506,7 @@ function App() {
             element={
               <OverviewPage
                 devices={devices}
+                customTypes={customTypes}
                 loading={loadingSheets}
                 addMode={addMode}
                 onToggleAddMode={toggleAddMode}
@@ -452,6 +521,7 @@ function App() {
             element={
               <DeviceRoutePage
                 devices={devices}
+                customTypes={customTypes}
                 onRefresh={() => {
                   void loadDevices(true);
                 }}
@@ -475,6 +545,10 @@ function App() {
           setIsAddModalOpen(false);
           setAddMode(false);
         }}
+        customTypes={customTypes}
+        onCustomTypesChanged={() => {
+          void reloadCustomTypes();
+        }}
         onSave={(data) => {
           void handleSavePosition(data);
         }}
@@ -490,6 +564,7 @@ function App() {
         deviceName={reportTarget?.name ?? '-'}
         location={reportTarget ? `${reportTarget.lat.toFixed(6)}, ${reportTarget.lng.toFixed(6)}` : '-'}
         status={reportTarget ? statusLabels[reportTarget.status] : '-'}
+        customTypes={customTypes}
         onSubmitted={() => {
           // no-op hook for future analytics
         }}

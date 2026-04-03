@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchDeviceComplaints, saveComplaint } from './lib/data';
+import { getDeviceTypeMeta } from './deviceTypeMeta';
+import type { CustomDeviceType } from './lib/customDeviceTypes';
 import type { DeviceType } from './types';
 
 const MAX_ATTACHMENT_SIZE_BYTES = 5 * 1024 * 1024;
@@ -10,6 +12,7 @@ interface ReportFormModalProps {
   onClose: () => void;
   deviceId: string;
   deviceType: DeviceType;
+  customTypes: CustomDeviceType[];
   deviceName?: string;
   location?: string;
   status?: string;
@@ -26,6 +29,7 @@ function ReportFormModal({
   onClose,
   deviceId,
   deviceType,
+  customTypes,
   deviceName = '-',
   location = '-',
   status = '-',
@@ -162,7 +166,8 @@ function ReportFormModal({
     }
   };
 
-  const deviceIcon = deviceType === 'wifi' ? '📶' : deviceType === 'streetlight' ? '💡' : '🚒';
+  const customMeta = customTypes.find((item) => item.typeCode === deviceType);
+  const deviceIcon = getDeviceTypeMeta(deviceType, customMeta ?? undefined).icon;
   const statusColor = status.includes('ปกติ')
     ? '#10b981'
     : status.includes('ซ่อม')

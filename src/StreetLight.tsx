@@ -1,8 +1,10 @@
 import DeviceDetail from './DeviceDetail';
+import type { CustomDeviceType } from './lib/customDeviceTypes';
 import type { Device } from './types';
 
 interface StreetLightProps {
   devices: Device[];
+  customTypes: CustomDeviceType[];
   selectedId?: string;
   onSelect: (deviceId: string) => void;
   onRefresh: () => void;

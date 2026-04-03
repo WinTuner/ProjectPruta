@@ -2,21 +2,40 @@ import { useEffect, useState } from 'react';
 import { X, MapPin, Save } from 'lucide-react';
 import './AddPositionModal.css';
 import type { DeviceStatus } from './status';
-import type { NewDeviceInput } from './types';
+import { getDeviceTypeMeta, KNOWN_DEVICE_TYPE_ORDER } from './deviceTypeMeta';
+import {
+  createCustomDeviceType,
+  deleteCustomDeviceType,
+  normalizeCustomDeviceTypeCode,
+  updateCustomDeviceType,
+  type CustomDeviceType,
+} from './lib/customDeviceTypes';
+import type { DeviceType, NewDeviceInput } from './types';
 
 interface AddPositionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (data: NewDeviceInput) => void;
+  customTypes: CustomDeviceType[];
+  onCustomTypesChanged: () => void;
   initialLat?: number;
   initialLng?: number;
 }
 
-const deviceTypes: Array<{ value: NewDeviceInput['type']; label: string; icon: string }> = [
-  { value: 'streetlight', label: '💡 ไฟส่องสว่าง', icon: '💡' },
-  { value: 'wifi', label: '📶 Wi-Fi สาธารณะ', icon: '📶' },
-  { value: 'hydrant', label: '🚒 ประปา/ดับเพลิง', icon: '🚒' }
-];
+type DeviceTypeOption = {
+  value: DeviceType;
+  label: string;
+  icon: string;
+};
+
+const baseDeviceTypes: DeviceTypeOption[] = KNOWN_DEVICE_TYPE_ORDER.map((value) => {
+  const meta = getDeviceTypeMeta(value);
+  return {
+    value,
+    label: meta.label,
+    icon: meta.icon,
+  };
+});
 
 const statusOptions: Array<{ value: DeviceStatus; label: string }> = [
   { value: 'normal', label: '✓ ปกติ' },
@@ -31,8 +50,17 @@ function toDeviceStatus(value: string): DeviceStatus {
   return 'normal';
 }
 
-function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng = 0 }: AddPositionModalProps) {
-  const [type, setType] = useState<'streetlight' | 'wifi' | 'hydrant'>('streetlight');
+
+function AddPositionModal({ isOpen, onClose, onSave, customTypes, onCustomTypesChanged, initialLat = 0, initialLng = 0 }: AddPositionModalProps) {
+  const [type, setType] = useState<DeviceType>('streetlight');
+  const [customTypeItems, setCustomTypeItems] = useState<CustomDeviceType[]>(customTypes);
+  const [newTypeCode, setNewTypeCode] = useState('');
+  const [newTypeLabel, setNewTypeLabel] = useState('');
+  const [newTypeIcon, setNewTypeIcon] = useState('🧩');
+  const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
+  const [editingTypeLabel, setEditingTypeLabel] = useState('');
+  const [editingTypeIcon, setEditingTypeIcon] = useState('');
+  const [savingTypeId, setSavingTypeId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [status, setStatus] = useState<DeviceStatus>('normal');
@@ -51,6 +79,19 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
   const [isp, setIsp] = useState('');
   const [speed, setSpeed] = useState('');
   const [pressure, setPressure] = useState('');
+
+  useEffect(() => {
+    setCustomTypeItems(customTypes);
+  }, [customTypes]);
+
+  const customDeviceTypeOptions: DeviceTypeOption[] = customTypeItems.map((item) => ({
+    value: item.typeCode,
+    label: item.label,
+    icon: item.icon,
+  }));
+
+  const deviceTypes = [...baseDeviceTypes, ...customDeviceTypeOptions];
+  const activeType = deviceTypes.find((item) => item.value === type);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -75,6 +116,8 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
     
     onSave({
       type,
+      customTypeLabel: activeType?.label,
+      customTypeIcon: activeType?.icon,
       name: name.trim(),
       description: description.trim(),
       status,
@@ -93,8 +136,116 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
     setUseRadiusPin(true); setUseSketchPin(false); setRadiusMeters(100);
     setLampType(''); setBulbType(''); setWatt(''); setOwner('');
     setIsp(''); setSpeed(''); setPressure('');
+    setEditingTypeId(null);
+    setEditingTypeLabel('');
+    setEditingTypeIcon('');
     
     onClose();
+  };
+
+  const handleAddCustomType = async () => {
+    const code = normalizeCustomDeviceTypeCode(newTypeCode);
+    const label = newTypeLabel.trim();
+
+    if (!code) {
+      alert('กรุณากรอกรหัสประเภทเป็นภาษาอังกฤษ ตัวเลข หรือ -/_');
+      return;
+    }
+
+    if (!label) {
+      alert('กรุณากรอกชื่อประเภทที่ต้องการแสดงผล');
+      return;
+    }
+
+    const exists = [...baseDeviceTypes, ...customDeviceTypeOptions].some((item) => item.value === code);
+    if (exists) {
+      alert('รหัสประเภทนี้มีอยู่แล้ว');
+      return;
+    }
+
+    try {
+      setSavingTypeId(code);
+      const createdType = await createCustomDeviceType({
+        typeCode: code,
+        label,
+        icon: newTypeIcon.trim() || '🧩',
+      });
+      setCustomTypeItems((prev) => [
+        ...prev,
+        createdType,
+      ]);
+      setType(code);
+      setNewTypeCode('');
+      setNewTypeLabel('');
+      setNewTypeIcon('🧩');
+      onCustomTypesChanged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ไม่สามารถเพิ่มประเภทอุปกรณ์ได้';
+      alert(message);
+    } finally {
+      setSavingTypeId(null);
+    }
+  };
+
+  const beginEditCustomType = (item: CustomDeviceType) => {
+    setEditingTypeId(item.id);
+    setEditingTypeLabel(item.label);
+    setEditingTypeIcon(item.icon);
+  };
+
+  const cancelEditCustomType = () => {
+    setEditingTypeId(null);
+    setEditingTypeLabel('');
+    setEditingTypeIcon('');
+  };
+
+  const handleUpdateCustomType = async (item: CustomDeviceType) => {
+    const label = editingTypeLabel.trim();
+    const icon = editingTypeIcon.trim();
+
+    if (!label) {
+      alert('กรุณากรอกชื่อประเภท');
+      return;
+    }
+
+    try {
+      setSavingTypeId(item.id);
+      await updateCustomDeviceType(item.id, {
+        label,
+        icon: icon || '🧩',
+      });
+      setCustomTypeItems((prev) => prev.map((entry) => (entry.id === item.id ? { ...entry, label, icon: icon || '🧩' } : entry)));
+      cancelEditCustomType();
+      onCustomTypesChanged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ไม่สามารถแก้ไขประเภทอุปกรณ์ได้';
+      alert(message);
+    } finally {
+      setSavingTypeId(null);
+    }
+  };
+
+  const handleDeleteCustomType = async (item: CustomDeviceType) => {
+    const confirmed = window.confirm(`ต้องการลบประเภท "${item.label}" ใช่หรือไม่`);
+    if (!confirmed) return;
+
+    try {
+      setSavingTypeId(item.id);
+      await deleteCustomDeviceType(item.id);
+      setCustomTypeItems((prev) => prev.filter((entry) => entry.id !== item.id));
+      if (type === item.typeCode) {
+        setType('streetlight');
+      }
+      if (editingTypeId === item.id) {
+        cancelEditCustomType();
+      }
+      onCustomTypesChanged();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'ไม่สามารถลบประเภทอุปกรณ์ได้';
+      alert(message);
+    } finally {
+      setSavingTypeId(null);
+    }
   };
 
   if (!isOpen) return null;
@@ -113,6 +264,88 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
         </div>
 
         <form onSubmit={handleSubmit} className="modal-body">
+          <div className="form-group custom-type-box">
+            <label>เพิ่มประเภทอุปกรณ์ใหม่</label>
+            <div className="custom-type-grid">
+              <input
+                type="text"
+                value={newTypeCode}
+                onChange={(e) => setNewTypeCode(e.target.value)}
+                placeholder="รหัสประเภท เช่น cctv"
+                className="form-input"
+              />
+              <input
+                type="text"
+                value={newTypeLabel}
+                onChange={(e) => setNewTypeLabel(e.target.value)}
+                placeholder="ชื่อที่แสดง เช่น กล้องวงจรปิด"
+                className="form-input"
+              />
+              <input
+                type="text"
+                value={newTypeIcon}
+                onChange={(e) => setNewTypeIcon(e.target.value)}
+                placeholder="ไอคอน เช่น 📹"
+                className="form-input"
+                maxLength={2}
+              />
+              <button type="button" className="btn-secondary add-type-btn" onClick={() => void handleAddCustomType()} disabled={savingTypeId === normalizeCustomDeviceTypeCode(newTypeCode)}>
+                {savingTypeId === normalizeCustomDeviceTypeCode(newTypeCode) ? 'กำลังบันทึก...' : 'เพิ่มประเภท'}
+              </button>
+            </div>
+          </div>
+
+          {customTypes.length > 0 && (
+            <div className="form-group custom-type-box">
+              <label>จัดการประเภทอุปกรณ์ custom</label>
+              <div className="custom-type-list">
+                {customTypes.map((item) => (
+                  <div key={item.id} className="custom-type-row">
+                    {editingTypeId === item.id ? (
+                      <>
+                        <input
+                          type="text"
+                          className="form-input"
+                          value={editingTypeIcon}
+                          onChange={(e) => setEditingTypeIcon(e.target.value)}
+                          maxLength={2}
+                          style={{ maxWidth: '72px' }}
+                        />
+                        <input
+                          type="text"
+                          className="form-input"
+                          value={editingTypeLabel}
+                          onChange={(e) => setEditingTypeLabel(e.target.value)}
+                          placeholder="ชื่อประเภท"
+                        />
+                        <button type="button" className="btn-primary custom-type-action" onClick={() => void handleUpdateCustomType(item)} disabled={savingTypeId === item.id}>
+                          {savingTypeId === item.id ? 'กำลังบันทึก...' : 'บันทึก'}
+                        </button>
+                        <button type="button" className="btn-secondary custom-type-action" onClick={cancelEditCustomType} disabled={savingTypeId === item.id}>
+                          ยกเลิก
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <div className="custom-type-chip">
+                          <span>{item.icon}</span>
+                          <span>{item.label}</span>
+                        </div>
+                        <div className="custom-type-code">{item.typeCode}</div>
+                        <button type="button" className="btn-secondary custom-type-action" onClick={() => beginEditCustomType(item)} disabled={savingTypeId !== null}>
+                          แก้ชื่อ
+                        </button>
+                        <button type="button" className="btn-secondary custom-type-action" onClick={() => void handleDeleteCustomType(item)} disabled={savingTypeId === item.id}>
+                          ลบ
+                        </button>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="form-group">
             <label>ประเภทอุปกรณ์ <span className="required">*</span></label>
             <div className="device-type-grid">
@@ -153,6 +386,12 @@ function AddPositionModal({ isOpen, onClose, onSave, initialLat = 0, initialLng 
             {type === 'hydrant' && (
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div><span className="form-hint">ระดับแรงดันน้ำ</span><input type="text" value={pressure} onChange={e => setPressure(e.target.value)} placeholder="เช่น ปกติ, สูง" className="form-input" /></div>
+              </div>
+            )}
+
+            {type !== 'streetlight' && type !== 'wifi' && type !== 'hydrant' && (
+              <div>
+                <span className="form-hint">ประเภทนี้จะถูกบันทึกเป็นหมวดใหม่ และใช้ข้อมูลหมายเหตุร่วมกับสถานะ/พิกัด</span>
               </div>
             )}
           </div>
