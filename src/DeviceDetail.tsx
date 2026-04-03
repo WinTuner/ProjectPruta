@@ -4,8 +4,10 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './durablearticles.css';
 import { getStatusBadgeClass, statusColors, statusLabels, type DeviceStatus } from './status';
+import { getDeviceTypeMeta, isKnownDeviceType, parseCustomTypeFromDescription } from './deviceTypeMeta';
 import ReportButton from './ReportButton';
 import type { Device, DeviceType } from './types';
+import type { CustomDeviceType } from './lib/customDeviceTypes';
 import { fetchDeviceComplaints, fetchDeviceEditLogs, type DeviceEditHistoryItem, updateDeviceData } from './lib/data';
 
 const iconDefaultPrototype = (L.Icon.Default as any).prototype;
@@ -19,6 +21,7 @@ L.Icon.Default.mergeOptions({
 interface DeviceDetailProps {
   type: DeviceType;
   devices: Device[];
+  customTypes: CustomDeviceType[];
   selectedId?: string;
   onSelect: (deviceId: string) => void;
   onRefresh: () => void;
@@ -45,13 +48,30 @@ type ToastState = {
   tone: 'success' | 'error' | 'info';
 };
 
-type TypeConfig = { title: string; subtitle: string; icon: string; listIcon: ReactNode; };
+type TypeConfig = { title: string; subtitle: string; icon: string; listIcon: ReactNode };
 
-const TYPE_CONFIG: Record<DeviceType, TypeConfig> = {
+const TYPE_CONFIG: Record<'streetlight' | 'wifi' | 'hydrant', TypeConfig> = {
   streetlight: { title: 'ไฟส่องสว่าง', subtitle: 'ฐานข้อมูลครุภัณฑ์ไฟสาธารณะ', icon: '💡', listIcon: <Lightbulb size={20} color="#2563eb" /> },
   wifi: { title: 'ไวไฟชุมชน', subtitle: 'จุดกระจายสัญญาณอินเทอร์เน็ตฟรี', icon: '📶', listIcon: <Wifi size={20} color="#2563eb" /> },
   hydrant: { title: 'ประปาหัวแดง', subtitle: 'จุดจ่ายน้ำดับเพลิงและแรงดันน้ำ', icon: '🚒', listIcon: <Droplet size={20} color="#dc2626" /> },
 };
+
+function getTypeConfig(type: DeviceType, customMeta?: CustomDeviceType | null, sampleDescription?: string): TypeConfig {
+  if (isKnownDeviceType(type)) {
+    // เปลี่ยนจาก: return TYPE_CONFIG[type];
+// เป็น:
+return TYPE_CONFIG[type as keyof typeof TYPE_CONFIG] || TYPE_CONFIG.streetlight; 
+// หรือใช้ default config ถ้าหาไม่เจอ
+  }
+
+  const meta = getDeviceTypeMeta(type, customMeta ?? parseCustomTypeFromDescription(sampleDescription));
+  return {
+    title: meta.label,
+    subtitle: 'หมวดอุปกรณ์ที่เพิ่มเอง',
+    icon: meta.icon,
+    listIcon: <MapPin size={20} color="#2563eb" />,
+  };
+}
 
 function toLatLng(device: Device): [number, number] | null {
   if (!Number.isFinite(device.lat) || !Number.isFinite(device.lng)) return null;
@@ -59,10 +79,10 @@ function toLatLng(device: Device): [number, number] | null {
 }
 
 function DeviceDetail({
-  type, devices, selectedId, onSelect, onRefresh, refreshing, onNavigateOverview, onComplaintSubmitted, onOpenReport,
+  type, devices, customTypes, selectedId, onSelect, onRefresh, refreshing, onNavigateOverview: _onNavigateOverview, onComplaintSubmitted: _onComplaintSubmitted, onOpenReport,
 }: DeviceDetailProps) {
-  const config = TYPE_CONFIG[type];
   const filteredDevices = useMemo(() => devices.filter((device) => device.type === type), [devices, type]);
+  const config = getTypeConfig(type, customTypes.find((item) => item.typeCode === type) ?? null, filteredDevices[0]?.description);
 
   const [currentId, setCurrentId] = useState<string | undefined>(selectedId);
   const mapRef = useRef<L.Map | null>(null);
@@ -271,11 +291,15 @@ function DeviceDetail({
         </>
       );
     }
-    return (
-      <>
-        <div><span className="sl-field-label">ระดับแรงดันน้ำ</span><p className="sl-field-value"><Gauge size={16} style={{ display: 'inline' }} /> {device.pressure || '-'}</p></div>
-      </>
-    );
+    if (device.type === 'hydrant') {
+      return (
+        <>
+          <div><span className="sl-field-label">ระดับแรงดันน้ำ</span><p className="sl-field-value"><Gauge size={16} style={{ display: 'inline' }} /> {device.pressure || '-'}</p></div>
+        </>
+      );
+    }
+
+    return null;
   };
 
   return (

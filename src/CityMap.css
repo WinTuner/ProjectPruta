@@ -193,6 +193,66 @@
 .marker-container:hover { transform: scale(1.15); z-index: 999 !important; }
 .marker-icon { font-size: 1.4rem; }
 
+.marker-sync-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 2px solid white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  color: #0f172a;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.24);
+  background: #fbbf24;
+}
+
+.marker-sync-badge--pending {
+  background: #facc15;
+}
+
+.marker-sync-badge--error {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+.map-sync-summary {
+  position: absolute;
+  right: 20px;
+  bottom: 30px;
+  z-index: 12;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  border-radius: 14px;
+  padding: 10px 12px;
+  min-width: 180px;
+}
+
+.map-sync-summary h4 {
+  margin: 0 0 6px 0;
+  font-size: 0.8rem;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.map-sync-summary p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.map-sync-summary p + p {
+  margin-top: 4px;
+}
+
 .map-footer { display: none; } /* ซ่อน footer */
 
 /* Temp Marker Animation */
@@ -298,6 +358,12 @@
   .city-map-container .leaflet-bottom.leaflet-left {
     margin-left: 10px;
     margin-bottom: 90px;
+  }
+
+  .map-sync-summary {
+    right: 10px;
+    bottom: 90px;
+    min-width: 150px;
   }
 
   .city-map-container .leaflet-bottom.leaflet-left .leaflet-control-layers {

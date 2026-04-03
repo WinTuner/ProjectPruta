@@ -1,6 +1,6 @@
 import Papa from 'papaparse';
 import { parseDeviceStatus } from '../status';
-import type { ComplaintInput, Device, HydrantDevice, NewDeviceInput, StreetLightDevice, WifiDevice } from '../types';
+import type { ComplaintInput, Device, HydrantDevice, NewDeviceInput, StreetLightDevice, SyncStatus, WifiDevice } from '../types';
 import { isSupabaseEnabled, supabase } from './supabase';
 
 const SHEET_STREETLIGHT =
@@ -9,6 +9,7 @@ const SHEET_WIFI =
   'https://docs.google.com/spreadsheets/d/e/2PACX-1vQv7p9ib0xXet8Alyik_Fi9CdBVvZO8xz73K4k0wEoNqpwIWAKFGIfbk0IkE8knnp-LXvNA6OceINr1/pub?gid=123712203&single=true&output=csv';
 const SHEET_HYDRANT =
   'https://docs.google.com/spreadsheets/d/e/2PACX-1vQv7p9ib0xXet8Alyik_Fi9CdBVvZO8xz73K4k0wEoNqpwIWAKFGIfbk0IkE8knnp-LXvNA6OceINr1/pub?gid=872918807&single=true&output=csv';
+const LOCAL_DEVICE_CACHE_KEY = 'projectpruta.cached-devices';
 
 interface StreetLightRow {
   ASSET_ID?: string;
@@ -56,6 +57,118 @@ interface HydrantRow {
 
 const DEFAULT_DEPARTMENT = 'เทศบาลตำบลพลูตาหลวง';
 const COMPLAINT_IMAGE_BUCKET = import.meta.env.VITE_SUPABASE_COMPLAINT_BUCKET || 'complaint-images';
+
+type CachedDevice = Device & {
+  _syncStatus: SyncStatus;
+  _updatedAt: string;
+  _lastError?: string | null;
+};
+
+function toCachedDevice(raw: unknown): CachedDevice | null {
+  if (!raw || typeof raw !== 'object') return null;
+
+  const value = raw as Record<string, unknown>;
+  if (typeof value.id !== 'string' || typeof value.type !== 'string') return null;
+
+  const syncStatusRaw = value._syncStatus;
+  const syncStatus: SyncStatus =
+    syncStatusRaw === 'pending' || syncStatusRaw === 'error' || syncStatusRaw === 'synced'
+      ? syncStatusRaw
+      : 'synced';
+
+  const updatedAtRaw = value._updatedAt;
+  const updatedAt = typeof updatedAtRaw === 'string' && updatedAtRaw.trim() ? updatedAtRaw : new Date().toISOString();
+
+  return {
+    ...(value as unknown as Device),
+    source: 'supabase',
+    _syncStatus: syncStatus,
+    _updatedAt: updatedAt,
+    _lastError: typeof value._lastError === 'string' ? value._lastError : null,
+  };
+}
+
+function readLocalDeviceCache(): CachedDevice[] {
+  if (typeof window === 'undefined') return [];
+
+  try {
+    const raw = window.localStorage.getItem(LOCAL_DEVICE_CACHE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map((item) => toCachedDevice(item))
+      .filter((item): item is CachedDevice => item !== null);
+  } catch {
+    return [];
+  }
+}
+
+function cachedToDevice(device: CachedDevice): Device {
+  const { _syncStatus: _ignoredStatus, _updatedAt: _ignoredUpdatedAt, _lastError: _ignoredError, ...rest } = device;
+  return {
+    ...rest,
+    syncStatus: device._syncStatus,
+    source: 'supabase',
+  };
+}
+
+function getLocalCachedDevicesForMerge(): Device[] {
+  return readLocalDeviceCache().map(cachedToDevice);
+}
+
+function removeSyncedCacheNotInDb(dbDevices: Device[]): void {
+  const current = readLocalDeviceCache();
+  if (current.length === 0) return;
+
+  const dbKeys = new Set(dbDevices.map((device) => `${device.type}:${device.id}`));
+  const next = current.filter((item) => item._syncStatus !== 'synced' || dbKeys.has(`${item.type}:${item.id}`));
+
+  if (next.length !== current.length) {
+    writeLocalDeviceCache(next);
+    console.debug('[data] Local cache cleanup removed stale synced rows:', {
+      removed: current.length - next.length,
+    });
+  }
+}
+
+function writeLocalDeviceCache(cache: CachedDevice[]): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    window.localStorage.setItem(LOCAL_DEVICE_CACHE_KEY, JSON.stringify(cache));
+  } catch (error) {
+    console.warn('[data] Failed to write local device cache:', error);
+  }
+}
+
+function upsertLocalDeviceCache(
+  device: Device,
+  syncStatus: SyncStatus,
+  options?: { replaceType?: string; replaceId?: string; errorMessage?: string | null },
+): void {
+  const current = readLocalDeviceCache();
+  const nextUpdatedAt = new Date().toISOString();
+
+  const nextDevice: CachedDevice = {
+    ...device,
+    source: 'supabase',
+    _syncStatus: syncStatus,
+    _updatedAt: nextUpdatedAt,
+    _lastError: options?.errorMessage ?? null,
+  };
+
+  const next = current.filter((item) => {
+    if (item.type === device.type && item.id === device.id) return false;
+    if (options?.replaceType && options?.replaceId && item.type === options.replaceType && item.id === options.replaceId) return false;
+    return true;
+  });
+
+  next.push(nextDevice);
+  writeLocalDeviceCache(next);
+}
 
 function encodeStoragePath(path: string): string {
   return path
@@ -240,15 +353,89 @@ interface DeviceDbRow {
 }
 
 function mapDeviceType(value: string | undefined): Device['type'] | null {
-  if (value === 'streetlight' || value === 'wifi' || value === 'hydrant') {
-    return value;
+  const normalized = (value ?? '').trim();
+  if (!normalized) return null;
+  return normalized as Device['type'];
+}
+
+function mapToDbFormat(device: any) {
+  const resolvedId = String(device?.id ?? device?.device_code ?? '').trim();
+  const lat = parseNumber(device?.lat);
+  const lng = parseNumber(device?.lng ?? device?.lon);
+  const rangeMeters = parseNumber(device?.rangeMeters ?? device?.range_meters ?? device?.range);
+
+  return {
+    id: resolvedId,
+    name: typeof device?.name === 'string' ? device.name : '',
+    type: typeof device?.type === 'string' ? device.type : 'streetlight',
+    lat: lat ?? 0,
+    lng: lng ?? 0,
+    status: typeof device?.status === 'string' ? device.status : 'normal',
+    description: typeof device?.description === 'string' ? device.description : '',
+    department: typeof device?.department === 'string' && device.department.trim() ? device.department : DEFAULT_DEPARTMENT,
+    range_meters: rangeMeters ?? 100,
+    sketch_pin: Boolean(device?.sketchPin ?? device?.sketch_pin ?? false),
+    use_sketch_pin: Boolean(device?.useSketchPin ?? device?.use_sketch_pin ?? false),
+    use_radius_pin: Boolean(device?.useRadiusPin ?? device?.use_radius_pin ?? true),
+    device_type: typeof device?.device_type === 'string' ? device.device_type : (typeof device?.type === 'string' ? device.type : ''),
+    device_code: typeof device?.device_code === 'string' && device.device_code.trim() ? device.device_code : resolvedId,
+    source: 'supabase',
+  };
+}
+
+function buildDeviceInsertPayloadCandidates(device: any): Array<Record<string, unknown>> {
+  const mapped = mapToDbFormat(device);
+
+  return [
+    mapped,
+    {
+      id: mapped.id,
+      device_code: mapped.device_code,
+      name: mapped.name,
+      device_type: mapped.device_type,
+      lat: mapped.lat,
+      lng: mapped.lng,
+      status: mapped.status,
+      department: mapped.department,
+      description: mapped.description || null,
+      range_meters: mapped.range_meters,
+      sketch_pin: mapped.sketch_pin,
+    },
+  ];
+}
+
+async function upsertDeviceWithFallback(
+  devicesTable: any,
+  device: any,
+): Promise<{ data: any; error: any; lastError: any }> {
+  const payloadCandidates = buildDeviceInsertPayloadCandidates(device);
+  let result: { data: any; error: any } = { data: null, error: null };
+  let lastError: any = null;
+
+  for (const payload of payloadCandidates) {
+    for (const onConflict of ['id', 'device_code']) {
+      result = await devicesTable.upsert(payload, { onConflict }).select('*');
+      if (!result.error) {
+        return { data: result.data, error: null, lastError: null };
+      }
+
+      lastError = result.error;
+
+      // Keep trying other payload/conflict combinations for schema and constraint variations.
+      if (result.error.code === '42703' || result.error.code === '42P10' || result.error.code === '23505') {
+        continue;
+      }
+
+      break;
+    }
   }
-  return null;
+
+  return { data: result.data, error: result.error, lastError };
 }
 
 function mapDbRows(rows: DeviceDbRow[]): Device[] {
   const mapped: Array<Device | null> = rows
-    .map((row) => {
+    .map((row, idx) => {
       const id = (row.device_code ?? row.id ?? '').trim();
       const type = mapDeviceType(row.device_type ?? row.type);
       const lat = parseNumber(row.lat);
@@ -257,23 +444,50 @@ function mapDbRows(rows: DeviceDbRow[]): Device[] {
         return null;
       }
 
-      return {
+      const parsedStatus = parseDeviceStatus(row.status);
+      
+      if (idx === 0) {
+        console.debug('[data] mapDbRows first row status conversion:', {
+          rawStatus: row.status,
+          parsedStatus,
+          rowData: { id, name: row.name, type, status: row.status },
+        });
+      }
+
+      const device: Device = {
         id,
         name: row.name?.trim() || id,
         type,
         lat,
         lng,
-        status: parseDeviceStatus(row.status),
+        status: parsedStatus,
         department: row.department ?? DEFAULT_DEPARTMENT,
         description: row.description ?? '',
         deviceImageUrl: row.device_image_url ?? row.image_url ?? row.photo_url ?? undefined,
         rangeMeters: parseNumber((row.range_meters ?? row.range) ?? undefined) ?? 0,
         sketchPin: row.sketch_pin ?? row.sketchPin ?? false,
+        syncStatus: 'synced' as const,
         source: 'supabase' as const,
       };
+
+      return device;
     });
 
-  return mapped.filter((item): item is Device => item !== null);
+  const result = mapped.filter((item): item is Device => item !== null);
+  
+  if (result.length > 0) {
+    console.debug('[data] mapDbRows mapped DB rows:', {
+      count: result.length,
+      sample: {
+        id: result[0].id,
+        name: result[0].name,
+        status: result[0].status,
+        source: result[0].source,
+      },
+    });
+  }
+
+  return result;
 }
 
 export async function fetchSheetDevices(): Promise<Device[]> {
@@ -286,8 +500,8 @@ export async function fetchSheetDevices(): Promise<Device[]> {
   return [...mapStreetLights(streetRows), ...mapWifi(wifiRows), ...mapHydrants(hydrantRows)];
 }
 
-export async function fetchDbDevices(): Promise<Device[]> {
-  if (!isSupabaseEnabled || !supabase) return [];
+async function fetchDbDevicesWithMeta(): Promise<{ devices: Device[]; success: boolean }> {
+  if (!isSupabaseEnabled || !supabase) return { devices: [], success: false };
 
   const devicesTable = supabase.from('devices') as any;
 
@@ -309,7 +523,7 @@ export async function fetchDbDevices(): Promise<Device[]> {
         details: fallbackResult.error.details,
         hint: fallbackResult.error.hint,
       });
-      return [];
+      return { devices: [], success: false };
     }
 
     const mapped = mapDbRows(fallbackResult.data ?? []);
@@ -317,7 +531,7 @@ export async function fetchDbDevices(): Promise<Device[]> {
       rawCount: (fallbackResult.data ?? []).length,
       mappedCount: mapped.length,
     });
-    return mapped;
+    return { devices: mapped, success: true };
   }
 
   const mapped = mapDbRows(orderedResult.data ?? []);
@@ -325,28 +539,74 @@ export async function fetchDbDevices(): Promise<Device[]> {
     rawCount: (orderedResult.data ?? []).length,
     mappedCount: mapped.length,
   });
-  return mapped;
+  return { devices: mapped, success: true };
+}
+
+export async function fetchDbDevices(): Promise<Device[]> {
+  const { devices } = await fetchDbDevicesWithMeta();
+  return devices;
 }
 
 export async function fetchAllDevices(): Promise<Device[]> {
-  const [sheetDevices, dbDevices] = await Promise.all([fetchSheetDevices(), fetchDbDevices()]);
+  const [sheetDevices, dbResult] = await Promise.all([fetchSheetDevices(), fetchDbDevicesWithMeta()]);
+  const dbDevices = dbResult.devices;
+  const cachedDevices = getLocalCachedDevicesForMerge();
 
-  // ให้ข้อมูลจากฐานข้อมูลเป็นแหล่งล่าสุด เพื่อให้ค่าแก้ไขทับข้อมูลที่มาจากชีตได้
+  // DB is source of truth for synced rows: purge stale synced cache entries after successful DB read.
+  if (dbResult.success) {
+    removeSyncedCacheNotInDb(dbDevices);
+  }
+
+  // Supabase is the authoritative source for any device it has
+  // Priority: DB (Supabase) > Local Cache > Google Sheets
   const mergedByKey = new Map<string, Device>();
+  
+  // Layer 1: Start with all sheet devices as baseline
   for (const device of sheetDevices) {
     mergedByKey.set(`${device.type}:${device.id}`, device);
   }
+  
+  // Layer 2: Override with cached devices (includes pending/error status)
+  for (const device of cachedDevices) {
+    const key = `${device.type}:${device.id}`;
+    const existing = mergedByKey.get(key);
+    mergedByKey.set(key, {
+      ...existing,
+      ...device,
+      source: 'supabase',
+    });
+  }
+  
+  // Layer 3: Override with DB devices (SUPABASE WINS - always)
   for (const device of dbDevices) {
-    mergedByKey.set(`${device.type}:${device.id}`, device);
+    const key = `${device.type}:${device.id}`;
+    const existing = mergedByKey.get(key);
+    // DB data completely overrides previous data, preserving extra fields if needed
+    mergedByKey.set(key, {
+      ...existing,
+      ...device,
+      source: 'supabase',
+      syncStatus: 'synced' as const,
+    });
   }
 
   const merged = Array.from(mergedByKey.values());
 
   console.debug('[data] fetchAllDevices merged result:', {
     sheetCount: sheetDevices.length,
+    cachedCount: cachedDevices.length,
     dbCount: dbDevices.length,
     mergedCount: merged.length,
+    dbSuccess: dbResult.success,
   });
+
+  // Log any discrepancies where the same device exists in multiple sources
+  const sheetIds = new Set(sheetDevices.map(d => `${d.type}:${d.id}`));
+  const dbIds = new Set(dbDevices.map(d => `${d.type}:${d.id}`));
+  const overlap = new Set([...sheetIds].filter(id => dbIds.has(id)));
+  if (overlap.size > 0) {
+    console.debug('[data] Devices found in both Sheet and DB (DB version used):', overlap.size);
+  }
 
   return merged;
 }
@@ -368,6 +628,13 @@ export async function saveDevicePosition(input: NewDeviceInput): Promise<Device>
     if (input.speed) extraDetails.push(`ความเร็ว: ${input.speed}`);
   } else if (input.type === 'hydrant') {
     if (input.pressure) extraDetails.push(`แรงดันน้ำ: ${input.pressure}`);
+  }
+
+  if (input.customTypeLabel) {
+    extraDetails.push(`[ประเภท:${input.customTypeLabel}]`);
+  }
+  if (input.customTypeIcon) {
+    extraDetails.push(`[ไอคอน:${input.customTypeIcon}]`);
   }
 
   // ถ้ามีการกรอกข้อมูลเพิ่มเติม ให้เอามาต่อท้ายหมายเหตุเดิม
@@ -395,56 +662,113 @@ export async function saveDevicePosition(input: NewDeviceInput): Promise<Device>
     ...(input as any) 
   };
 
+  // Queue as pending first so offline/network failures can be synced later.
+  upsertLocalDeviceCache(device, 'pending');
+
   if (!isSupabaseEnabled || !supabase) {
+    console.warn('[data] Supabase is disabled or missing env vars; queued device as pending in local cache.');
     return device;
   }
 
   const devicesTable = supabase.from('devices') as any;
-  const legacyPayload = {
-    device_code: deviceCode,
-    name: input.name,
+  const upsertTarget = {
+    ...device,
+    rangeMeters: input.useRadiusPin ? input.radiusMeters ?? 0 : 0,
+    sketchPin: input.useSketchPin,
+    useSketchPin: input.useSketchPin,
+    useRadiusPin: input.useRadiusPin,
     device_type: input.type,
-    lat: input.lat,
-    lng: input.lng,
-    status: input.status,
-    department: DEFAULT_DEPARTMENT,
-    description: finalDescription || null,
-    range_meters: input.useRadiusPin ? input.radiusMeters ?? 0 : 0,
-    sketch_pin: input.useSketchPin,
+    device_code: device.id,
   };
 
-  const modernPayload = {
-    id: deviceCode,
-    name: input.name,
-    type: input.type,
-    lat: input.lat,
-    lng: input.lng,
-    status: input.status,
-    department: DEFAULT_DEPARTMENT,
-    description: finalDescription || null,
-    range: input.useRadiusPin ? input.radiusMeters ?? 0 : 0,
-    sketch_pin: input.useSketchPin,
-  };
-
-  let insertResult = await devicesTable.insert(legacyPayload);
-  if (insertResult.error?.code === '42703') {
-    console.warn('[data] Legacy insert payload failed, retrying modern payload:', {
-      message: insertResult.error.message,
-      code: insertResult.error.code,
-    });
-    insertResult = await devicesTable.insert(modernPayload);
-  }
+  const insertResult = await upsertDeviceWithFallback(devicesTable, upsertTarget);
+  const lastInsertError = insertResult.lastError;
 
   if (insertResult.error) {
     console.error('Failed to save device to Supabase:', {
-      message: insertResult.error.message,
-      code: insertResult.error.code,
-      details: insertResult.error.details,
-      hint: insertResult.error.hint,
+      message: lastInsertError?.message ?? insertResult.error.message,
+      code: lastInsertError?.code ?? insertResult.error.code,
+      details: lastInsertError?.details ?? insertResult.error.details,
+      hint: lastInsertError?.hint ?? insertResult.error.hint,
     });
+    upsertLocalDeviceCache(device, 'pending', {
+      errorMessage: lastInsertError?.message ?? insertResult.error.message,
+    });
+    console.warn('[data] Insert failed; device remains pending in local cache.');
+    return device;
   }
 
-  return device;
+  const insertedDevice = mapDbRows(insertResult.data ?? [])[0] ?? device;
+  upsertLocalDeviceCache(insertedDevice, 'synced', {
+    replaceType: device.type,
+    replaceId: device.id,
+    errorMessage: null,
+  });
+
+  return insertedDevice;
+}
+
+export async function syncPendingDevices(): Promise<{ attempted: number; synced: number; failed: number }> {
+  const cache = readLocalDeviceCache();
+  const queue = cache
+    .filter((item) => item._syncStatus === 'pending' || item._syncStatus === 'error')
+    .sort((a, b) => a._updatedAt.localeCompare(b._updatedAt));
+
+  if (queue.length === 0) {
+    return { attempted: 0, synced: 0, failed: 0 };
+  }
+
+  if (!isSupabaseEnabled || !supabase) {
+    console.warn('[data] syncPendingDevices skipped: Supabase is disabled.');
+    return { attempted: queue.length, synced: 0, failed: queue.length };
+  }
+
+  const devicesTable = supabase.from('devices') as any;
+  let synced = 0;
+  let failed = 0;
+
+  for (const item of queue) {
+    const mappedPayload = mapToDbFormat(item);
+
+    if (!mappedPayload.id) {
+      failed += 1;
+      upsertLocalDeviceCache(item, 'error', {
+        errorMessage: 'Device id is missing before insert',
+      });
+      continue;
+    }
+
+    const insertResult = await upsertDeviceWithFallback(devicesTable, item);
+    const lastError = insertResult.lastError;
+
+    if (insertResult.error) {
+      failed += 1;
+      upsertLocalDeviceCache(item, 'error', {
+        errorMessage: lastError?.message ?? insertResult.error.message,
+      });
+      continue;
+    }
+
+    const syncedDevice = mapDbRows(insertResult.data ?? [])[0] ?? cachedToDevice(item);
+    upsertLocalDeviceCache(syncedDevice, 'synced', {
+      replaceType: item.type,
+      replaceId: item.id,
+      errorMessage: null,
+    });
+    synced += 1;
+  }
+
+  console.debug('[data] syncPendingDevices summary:', {
+    attempted: queue.length,
+    synced,
+    failed,
+  });
+
+  return {
+    attempted: queue.length,
+    synced,
+    failed,
+  };
 }
 
 export async function saveComplaint(input: ComplaintInput): Promise<void> {
@@ -650,37 +974,20 @@ export async function updateDeviceData(deviceId: string, updates: Partial<Device
       throw new Error('Cannot create missing device row: missing type or coordinates.');
     }
 
-    let insertResult = await devicesTable.insert(fallbackPayload);
-    if (insertResult.error) {
-      // fallback สำหรับ schema แบบ modern (type/range) และ id auto-generated
-      insertResult = await devicesTable.insert({
-        name: fallbackPayload.name,
-        type: fallbackPayload.device_type,
-        lat: fallbackPayload.lat,
-        lng: fallbackPayload.lng,
-        status: fallbackPayload.status,
-        department: fallbackPayload.department,
-        description: fallbackPayload.description,
-        range: fallbackPayload.range_meters,
-        sketch_pin: fallbackPayload.sketch_pin,
-      });
-    }
-
-    if (insertResult.error) {
-      // fallback สุดท้าย: modern schema ที่ต้องการ id เป็น device_code
-      insertResult = await devicesTable.insert({
-        id: deviceId,
-        name: fallbackPayload.name,
-        type: fallbackPayload.device_type,
-        lat: fallbackPayload.lat,
-        lng: fallbackPayload.lng,
-        status: fallbackPayload.status,
-        department: fallbackPayload.department,
-        description: fallbackPayload.description,
-        range: fallbackPayload.range_meters,
-        sketch_pin: fallbackPayload.sketch_pin,
-      });
-    }
+    const insertResult = await upsertDeviceWithFallback(devicesTable, {
+      id: deviceId,
+      device_code: fallbackPayload.device_code,
+      name: fallbackPayload.name,
+      type: fallbackPayload.device_type,
+      device_type: fallbackPayload.device_type,
+      lat: fallbackPayload.lat,
+      lng: fallbackPayload.lng,
+      status: fallbackPayload.status,
+      department: fallbackPayload.department,
+      description: fallbackPayload.description,
+      rangeMeters: fallbackPayload.range_meters,
+      sketchPin: fallbackPayload.sketch_pin,
+    });
 
     if (insertResult.error) {
       throw new Error(formatSupabaseError(insertResult.error));

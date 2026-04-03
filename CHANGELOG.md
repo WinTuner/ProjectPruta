@@ -1,5 +1,57 @@
 # 📝 Change Log - ระบบผังเมืองดิจิทัลเทศบาล
 
+## 🗓️ วันที่ 4 เมษายน 2026
+
+### ✅ แก้ไขสมบูรณ์: Data Sync & Status Rendering Pipeline
+
+#### 🔒 ระบบ Upsert ที่แข็งแรง (Duplicate Key 23505 Fix)
+- เปลี่ยนจาก `insert()` เป็น `upsert()` ในทุกจุดเขียนข้อมูลอุปกรณ์
+  - `saveDevicePosition()` - บันทึกอุปกรณ์ใหม่
+  - `syncPendingDevices()` - ซิงค์ข้อมูลค้างไว้
+  - `updateDeviceData()` - ปรับปรุงข้อมูลเดิม (fallback insert)
+- เพิ่ม `upsertDeviceWithFallback()` ที่รองรับ conflict target หลายแบบ
+  - ลองแบบแรก: `id` เป็น primary key
+  - ลองแบบรอง: `device_code` เป็น unique identifier
+  - ผ่าน schema ต่างกันระหว่าง legacy/modern database
+
+#### 🗺️ Data Mapping ที่เข้มแข็ง (Field Normalization)
+- เพิ่ม `mapToDbFormat()` เพื่อ normalize ฟิลด์ CamelCase → snake_case
+  - ส่วนรองรับ fallback: `id` ← `device_code`, `lat` ← `lng`/`lon`
+  - ส่อง active ค่า default สำหรับ range, status, department
+- เพิ่ม `buildDeviceInsertPayloadCandidates()` สำหรับ multi-schema support
+  - payload 1: ฟิลด์เต็มจาก mapToDbFormat
+  - payload 2: ฟิลด์ legacy-compatible (ตัดออก optional fields)
+
+#### 📊 Merge Logic 3-Layer (Source of Truth)
+- ปรับ `fetchAllDevices()` ให้ชัดเจน layer priority:
+  1. **Layer 1 (Base):** Google Sheets devices
+  2. **Layer 2 (Override):** Local Cache (pending/error status)
+  3. **Layer 3 (WINS):** Supabase DB devices (Supabase จำเป็นต้องชนะเสมอ)
+- เพิ่ม debug logging ระบุว่ามี overlap device กี่ตัว (Sheet ∩ DB)
+- รับรอง `source: 'supabase'` และ `syncStatus: 'synced'` บน DB devices
+
+#### ✨ Status Parsing ที่ Robust (English + Thai)
+- แก้ `parseDeviceStatus()` ใน `status.ts` เพื่อรองรับ:
+  - **English values:** `'normal'`, `'damaged'`, `'broken'`, `'repairing'`
+  - **Thai values:** `'ปกติ'`, `'ชำรุด'`, `'กำลังซ่อม'`, `'ซ่อม'`
+  - Case-insensitive matching ด้วย `toLowerCase()`
+- ทำให้ไม่ว่า DB เก็บเป็นค่าอังกฤษหรือไทย สถานะจะแสดงผลถูกบน UI
+
+#### 🔍 Debug Logging ที่ละเอียด
+- เพิ่ม log ในการ map DB rows:
+  - `[data] mapDbRows first row status conversion:` - แสดง raw ↔ parsed status
+  - ช่วยสืบสวนปัญหา status mismatch ระหว่าง DB กับ UI
+- เพิ่ม log ในการ merge:
+  - `[data] fetchAllDevices merged result:` - แสดง sheetCount/cachedCount/dbCount
+  - `[data] Devices found in both Sheet and DB:` - แสดง overlap
+- เพิ่ม log ใน `App.tsx loadDevices()` ด้วย sample device output
+
+#### 🧪 Verification
+- ตรวจ TypeScript errors: ✅ ผ่าน
+- ตรวจ production build: ✅ ผ่าน
+
+---
+
 ## 🗓️ วันที่ 1 เมษายน 2026
 
 ### ✅ สรุปงานที่ทำรอบล่าสุด
@@ -37,8 +89,8 @@
   - แสดงผู้แก้ไข เวลา และ before/after ชัดเจน
 
 #### 🧪 Verification
-- ตรวจ TypeScript errors ในไฟล์ที่แก้: ผ่าน
-- ตรวจ production build (`npm run build`): ผ่าน
+- ตรวจ TypeScript errors ในไฟล์ที่แก้: ✅ ผ่าน
+- ตรวจ production build (`npm run build`): ✅ ผ่าน
 
 ## 🗓️ วันที่ 24 มีนาคม 2026
 

@@ -1,6 +1,8 @@
 import type { DeviceStatus } from './status';
 
-export type DeviceType = 'streetlight' | 'wifi' | 'hydrant';
+export type KnownDeviceType = 'streetlight' | 'wifi' | 'hydrant';
+export type DeviceType = KnownDeviceType | (string & {});
+export type SyncStatus = 'synced' | 'pending' | 'error';
 
 export interface BaseDevice {
   id: string;
@@ -14,6 +16,7 @@ export interface BaseDevice {
   deviceImageUrl?: string;
   rangeMeters?: number;
   sketchPin?: boolean;
+  syncStatus?: SyncStatus;
   source: 'sheet' | 'supabase';
 }
 
@@ -44,6 +47,8 @@ export type Device = StreetLightDevice | WifiDevice | HydrantDevice;
 
 export interface NewDeviceInput {
   type: DeviceType;
+  customTypeLabel?: string;
+  customTypeIcon?: string;
   name: string;
   description: string;
   status: DeviceStatus;

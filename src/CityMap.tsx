@@ -3,7 +3,9 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import './CityMap.css';
 import { statusColors, statusLabels as sharedStatusLabels } from './status';
+import { getDeviceTypeMeta, parseCustomTypeFromDescription } from './deviceTypeMeta';
 import type { Device } from './types';
+import type { CustomDeviceType } from './lib/customDeviceTypes';
 import { isSupabaseEnabled, supabase } from './lib/supabase';
 
 // Get Esri World Imagery satellite preview (FREE, no API key required, CORS-friendly)
@@ -38,6 +40,7 @@ L.Icon.Default.mergeOptions({
 
 interface CityMapProps {
   devices: Device[];
+  customTypes: CustomDeviceType[];
   loading?: boolean;
   onAddPosition?: (lat: number, lng: number) => void;
   onReportDevice?: (device: Device) => void;
@@ -46,24 +49,6 @@ interface CityMapProps {
   showRanges?: boolean;
   showConnections?: boolean;
 }
-
-const deviceIcons: Record<Device['type'], { color: string; icon: string; label: string }> = {
-  streetlight: {
-    color: '#f59e0b',
-    icon: '💡',
-    label: 'ไฟส่องสว่าง',
-  },
-  hydrant: {
-    color: '#ef4444',
-    icon: '🚒',
-    label: 'หัวดับเพลิง/ประปา',
-  },
-  wifi: {
-    color: '#10b981',
-    icon: '📶',
-    label: 'Wi-Fi สาธารณะ',
-  },
-};
 
 const statusLabels = sharedStatusLabels;
 
@@ -77,6 +62,7 @@ const CHONBURI_LATLNG_BOUNDS = L.latLngBounds(CHONBURI_BOUNDS);
 
 function CityMap({
   devices,
+  customTypes,
   loading = false,
   onAddPosition,
   onReportDevice,
@@ -94,14 +80,14 @@ function CityMap({
   const hasSetInitialCenterRef = useRef(false);
   const complaintImageCacheRef = useRef<Map<string, string | null>>(new Map());
 
-  const [enabledTypes, setEnabledTypes] = useState<Record<Device['type'], boolean>>({
+  const [enabledTypes, setEnabledTypes] = useState<Record<string, boolean>>({
     streetlight: true,
     wifi: true,
     hydrant: true,
   });
 
   const availableTypes = useMemo(() => {
-    const set = new Set<Device['type']>();
+    const set = new Set<string>();
     devices.forEach((d) => set.add(d.type));
     return Array.from(set);
   }, [devices]);
@@ -110,6 +96,21 @@ function CityMap({
     () => devices.filter((d) => enabledTypes[d.type] !== false),
     [devices, enabledTypes],
   );
+
+  const syncSummary = useMemo(() => {
+    let pending = 0;
+    let error = 0;
+
+    devices.forEach((device) => {
+      if (device.syncStatus === 'pending') pending += 1;
+      if (device.syncStatus === 'error') error += 1;
+    });
+
+    return {
+      pending,
+      error,
+    };
+  }, [devices]);
 
   useEffect(() => {
     console.debug('[CityMap] render cycle:', {
@@ -334,7 +335,8 @@ function CityMap({
   }, [addMode, onAddPosition]);
 
   const addDeviceMarker = (layer: L.LayerGroup, device: Device) => {
-    const deviceInfo = deviceIcons[device.type];
+    const customTypeMeta = customTypes.find((item) => item.typeCode === device.type);
+    const deviceInfo = getDeviceTypeMeta(device.type, customTypeMeta ?? parseCustomTypeFromDescription(device.description));
     const markerColor = statusColors[device.status];
     
     // Use device image if available, otherwise use Esri satellite preview
@@ -348,10 +350,18 @@ function CityMap({
       ? `marker-container marker-container--sketch ${statusClass}`
       : `marker-container ${statusClass}`;
 
+    const syncBadgeHtml =
+      device.syncStatus === 'pending'
+        ? '<span class="marker-sync-badge marker-sync-badge--pending" title="รอซิงก์ขึ้น Cloud">⏳</span>'
+        : device.syncStatus === 'error'
+          ? '<span class="marker-sync-badge marker-sync-badge--error" title="ซิงก์ไม่สำเร็จ">!</span>'
+          : '';
+
     const customIcon = L.divIcon({
       className: 'custom-marker',
       html: `
         <div class="${markerContainerClass}" style="background-color: ${markerColor}">
+          ${syncBadgeHtml}
           <span class="marker-icon">${deviceInfo.icon}</span>
         </div>
       `,
@@ -523,7 +533,8 @@ function CityMap({
       const sketchDevices = visibleDevices.filter((d) => d.sketchPin);
       const segments = buildTypeMstConnections(sketchDevices);
       segments.forEach((seg) => {
-        const typeColor = deviceIcons[seg.type].color;
+        const customTypeMeta = customTypes.find((item) => item.typeCode === seg.type);
+        const typeColor = getDeviceTypeMeta(seg.type, customTypeMeta ?? parseCustomTypeFromDescription(seg.from.description)).color;
         L.polyline(
           [
             [seg.from.lat, seg.from.lng],
@@ -575,10 +586,11 @@ function CityMap({
       <div className="map-legend">
         <h3>สัญลักษณ์</h3>
         <div className="legend-items">
-          {(Object.keys(deviceIcons) as Device['type'][])
-            .filter((type) => availableTypes.includes(type))
+          {availableTypes
             .map((type) => {
-              const info = deviceIcons[type];
+              const sample = devices.find((item) => item.type === type);
+              const customTypeMeta = customTypes.find((item) => item.typeCode === type);
+              const info = getDeviceTypeMeta(type, customTypeMeta ?? parseCustomTypeFromDescription(sample?.description));
               const count = devices.filter((d) => d.type === type).length;
               const enabled = enabledTypes[type] !== false;
               return (
@@ -607,6 +619,14 @@ function CityMap({
           ))}
         </div>
       </div>
+
+      {(syncSummary.pending > 0 || syncSummary.error > 0) && (
+        <div className="map-sync-summary" role="status" aria-live="polite">
+          <h4>สถานะซิงก์</h4>
+          {syncSummary.pending > 0 && <p>⏳ รอส่งขึ้น Cloud: {syncSummary.pending}</p>}
+          {syncSummary.error > 0 && <p>! ส่งไม่สำเร็จ: {syncSummary.error}</p>}
+        </div>
+      )}
 
       <div ref={mapContainerRef} className={`city-map-leaflet-container ${addMode ? 'is-add-mode' : ''}`} />
 

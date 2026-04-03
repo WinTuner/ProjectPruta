@@ -8,7 +8,7 @@ export interface Database {
           id: string;
           device_code: string;
           name: string;
-          device_type: 'streetlight' | 'wifi' | 'hydrant';
+          device_type: string;
           lat: number;
           lng: number;
           status: string;
@@ -22,7 +22,7 @@ export interface Database {
           id?: string;
           device_code: string;
           name: string;
-          device_type: 'streetlight' | 'wifi' | 'hydrant';
+          device_type: string;
           lat: number;
           lng: number;
           status: string;
@@ -36,7 +36,7 @@ export interface Database {
           id?: string;
           device_code?: string;
           name?: string;
-          device_type?: 'streetlight' | 'wifi' | 'hydrant';
+          device_type?: string;
           lat?: number;
           lng?: number;
           status?: string;
@@ -52,7 +52,7 @@ export interface Database {
         Row: {
           id: string;
           device_id: string;
-          device_type: 'streetlight' | 'wifi' | 'hydrant';
+          device_type: string;
           device_name: string;
           location: string | null;
           status: string;
@@ -63,7 +63,7 @@ export interface Database {
         Insert: {
           id?: string;
           device_id: string;
-          device_type: 'streetlight' | 'wifi' | 'hydrant';
+          device_type: string;
           device_name: string;
           location?: string | null;
           status: string;
@@ -74,13 +74,46 @@ export interface Database {
         Update: {
           id?: string;
           device_id?: string;
-          device_type?: 'streetlight' | 'wifi' | 'hydrant';
+          device_type?: string;
           device_name?: string;
           location?: string | null;
           status?: string;
           description?: string | null;
           image_url?: string | null;
           created_at?: string | null;
+        };
+        Relationships: [];
+      };
+      custom_device_types: {
+        Row: {
+          id: string;
+          type_code: string;
+          label: string;
+          icon: string;
+          color: string | null;
+          is_active: boolean | null;
+          created_at: string | null;
+          updated_at: string | null;
+        };
+        Insert: {
+          id?: string;
+          type_code: string;
+          label: string;
+          icon?: string;
+          color?: string | null;
+          is_active?: boolean | null;
+          created_at?: string | null;
+          updated_at?: string | null;
+        };
+        Update: {
+          id?: string;
+          type_code?: string;
+          label?: string;
+          icon?: string;
+          color?: string | null;
+          is_active?: boolean | null;
+          created_at?: string | null;
+          updated_at?: string | null;
         };
         Relationships: [];
       };
